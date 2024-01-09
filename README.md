@@ -1,3 +1,6 @@
 ## PlatCluster
 
-this is platcluster project, which is a raft algorithem implement by scala.
+platcluster is a distribution key-value storage engine implemented base raft algorithm.
+
+
+
