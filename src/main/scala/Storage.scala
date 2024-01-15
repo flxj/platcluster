@@ -25,7 +25,7 @@ case class StorageOptions(driver:String,logPath:String,fsmPath:String)
 private[platcluster] object Storage:
     val driverPlatdb = "platdb:platdb"
     val driverMemory = "memory:memory"
-    val driverHybrid = "log:platdb"
+    val driverLogPlatdb = "log:platdb"
 
     val exceptNotSupportDriver = new Exception("not support such storage driver")
 
@@ -72,11 +72,15 @@ trait StateMachine:
 //
 trait LogStorage:
     def init():Try[Unit]
-    def latest:Try[LogEntry]
+    def latest:Try[(Long,LogEntry)]
+    def currentIndex:Long
+    def commitIndex:Long
+    def setCommitIndex(idx:Long):Try[Unit]
     def get(index:Long):Try[LogEntry]
-    def append(log:LogEntry):Try[Unit]
+    def append(entries:Seq[LogEntry]):Try[Unit]
     def delete(index:Long):Try[Unit]
     def dropRight(n:Int):Try[Unit]
+    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean]
 
 //
 private[platcluster] object PlatDB:
@@ -91,23 +95,27 @@ private[platcluster] class PlatDB(db:DB) extends Storage:
     def stateMachine():StateMachine = new PlatDBFSM(db)
 //
 private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
-    def init(): Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
+    def init():Try[Unit] = ???
+    def latest:Try[(Long,LogEntry)] = ???
+    def currentIndex:Long = ???
+    def commitIndex:Long = ???
+    def setCommitIndex(idx:Long):Try[Unit] = ???
     def get(index:Long):Try[LogEntry] = ???
-    def append(log:LogEntry):Try[Unit] = ???
+    def append(entries:Seq[LogEntry]):Try[Unit] = ???
     def delete(index:Long):Try[Unit] = ???
     def dropRight(n:Int):Try[Unit] = ???
+    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
     
 private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
     def init(): Try[Unit] = ???
     def apply(log:LogEntry):Try[CommandApplyResult] = ???
 
 
-private[platcluster] object HybridStorage:
-    def apply(ops:StorageOptions):HybridStorage = 
-        new HybridStorage(ops.logPath,new DB(ops.fsmPath))
+private[platcluster] object LogPlatDBStorage:
+    def apply(ops:StorageOptions):LogPlatDBStorage = 
+        new LogPlatDBStorage(ops.logPath,new DB(ops.fsmPath))
     
-private[platcluster] class HybridStorage(logPath:String,db:DB) extends Storage:
+private[platcluster] class LogPlatDBStorage(logPath:String,db:DB) extends Storage:
     def open(): Try[Unit] = db.open()
     def close(): Try[Unit] = db.close()
     //
@@ -117,12 +125,16 @@ private[platcluster] class HybridStorage(logPath:String,db:DB) extends Storage:
 
 //
 private[platcluster] class AppendLog(dir:String) extends LogStorage:
-    def init(): Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
+    def init():Try[Unit] = ???
+    def latest:Try[(Long,LogEntry)] = ???
+    def currentIndex:Long = ???
+    def commitIndex:Long = ???
+    def setCommitIndex(idx:Long):Try[Unit] = ???
     def get(index:Long):Try[LogEntry] = ???
-    def append(log:LogEntry):Try[Unit] = ???
+    def append(entries:Seq[LogEntry]):Try[Unit] = ???
     def delete(index:Long):Try[Unit] = ???
     def dropRight(n:Int):Try[Unit] = ???
+    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
     
 //
 private[platcluster] object MemoryStore:
@@ -138,12 +150,16 @@ private[platcluster] class MemoryStore() extends Storage:
 
 //
 private[platcluster] class MemoryLog() extends LogStorage:
-    def init(): Try[Unit] = ???
-     def latest:Try[LogEntry] = ???
+    def init():Try[Unit] = ???
+    def latest:Try[(Long,LogEntry)] = ???
+    def currentIndex:Long = ???
+    def commitIndex:Long = ???
+    def setCommitIndex(idx:Long):Try[Unit] = ???
     def get(index:Long):Try[LogEntry] = ???
-    def append(log:LogEntry):Try[Unit] = ???
+    def append(entries:Seq[LogEntry]):Try[Unit] = ???
     def delete(index:Long):Try[Unit] = ???
     def dropRight(n:Int):Try[Unit] = ???
+    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
 
 //
 private[platcluster] class MemoryFSM() extends StateMachine:

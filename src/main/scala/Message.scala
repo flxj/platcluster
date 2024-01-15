@@ -26,6 +26,8 @@ case class LogEntry(term:Long,logType:Byte,cmd:String):
      def getBytes:Array[Byte] = ???
 
 case class AppendEntriesReq(
+    // server id.
+    leaderId:String,
     // leader’s term leaderId so follower can redirect clients
     term:Long,
     // term of prevLogIndex entry
@@ -33,7 +35,9 @@ case class AppendEntriesReq(
     // index of log entry immediately preceding new ones
     prevLogIndex:Long,
     // log entries to store (empty for heartbeat; may send more than one for efficiency)
-    entries:ArrayBuffer[LogEntry]
+    entries:Array[LogEntry],
+    //
+    leaderCommit:Long
 )
 
 case class AppendEntriesResp(
@@ -41,6 +45,10 @@ case class AppendEntriesResp(
     term:Long,
     // true if follower contained entry matching prevLogIndex and prevLogTerm
     success:Boolean,
+    //
+    currentLogIndex:Long,
+    //
+    commitIndex:Long
 )
 
 case class RequestVoteReq(
@@ -60,3 +68,26 @@ case class RequestVoteResp(
     // true means candidate received vote
     voteGranted:Boolean
 )
+
+//
+object MessageTypes extends Enumeration {
+ type MessageType = Value
+ val Command, AppendEntriesRequest,AppendEntriesResponse, RequestVoteRequest,RequestVoteResponse = Value
+}
+
+import MessageTypes._
+//
+case class Message(
+    source:String,
+    msgType:MessageType,
+    content:String,
+)
+
+//
+object Message:
+    given Conversion[Message,Command] =  ???
+    given Conversion[Message,AppendEntriesReq] =  ???
+    given Conversion[Message,AppendEntriesResp] = ???
+    given Conversion[Message,RequestVoteReq] = ???
+    given Conversion[Message,RequestVoteResp] = ???
+

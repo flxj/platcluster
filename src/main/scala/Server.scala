@@ -23,15 +23,15 @@ case class ServerOptions(name:String,store:StorageOptions,raft:RaftOptions)
 //
 private[platcluster] object PlatServer:
     def apply(ops:ServerOptions):Try[PlatServer] = 
-        val db = ops.store.driver match
-            case Storage.driverPlatdb => PlatDB(ops.store)
-            case Storage.driverMemory => MemoryStore(ops.store)
-            case Storage.driverHybrid => HybridStorage(ops.store)
+        val db:Try[Storage] = ops.store.driver match
+            case Storage.driverPlatdb => Success(PlatDB(ops.store))
+            case Storage.driverMemory => Success(MemoryStore(ops.store))
+            case Storage.driverLogPlatdb => Success(LogPlatDBStorage(ops.store))
             case _ => Failure(Storage.exceptNotSupportDriver)
         db match
             case Failure(e) => Failure(e)
             case Success(store) =>
-                val raft = Raft(ops.raft,store.logStorage(),store.stateMachine())
+                val raft = Raft(ops.raft,store.stateMachine(),store.logStorage())
                 Success(new PlatServer(ops.name,store,raft))
 //
 private[platcluster] class PlatServer(name:String,store:Storage,cm:ConsensusModule):
