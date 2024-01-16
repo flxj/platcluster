@@ -17,13 +17,14 @@
 package platcluster
 
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.{Future,Promise}
 
 case class Command(op:String,key:String,value:String)
 
-case class CommandApplyResult(success:Boolean,err:String,content:String)
+case class Result(success:Boolean,err:String,content:String)
 
-case class LogEntry(term:Long,logType:Byte,cmd:String):
-     def getBytes:Array[Byte] = ???
+case class LogEntry(term:Long,index:Long,logType:Byte,cmd:String):
+    def getBytes:Array[Byte] = ???
 
 case class AppendEntriesReq(
     // server id.
@@ -34,10 +35,10 @@ case class AppendEntriesReq(
     prevLogTrem:Long,
     // index of log entry immediately preceding new ones
     prevLogIndex:Long,
-    // log entries to store (empty for heartbeat; may send more than one for efficiency)
-    entries:Array[LogEntry],
     //
-    leaderCommit:Long
+    leaderCommit:Long,
+    // log entries to store (empty for heartbeat; may send more than one for efficiency)
+    entries:Array[LogEntry]
 )
 
 case class AppendEntriesResp(
@@ -70,24 +71,45 @@ case class RequestVoteResp(
 )
 
 //
-object MessageTypes extends Enumeration {
+private[platcluster] object MessageTypes extends Enumeration {
  type MessageType = Value
  val Command, AppendEntriesRequest,AppendEntriesResponse, RequestVoteRequest,RequestVoteResponse = Value
 }
 
 import MessageTypes._
 //
-case class Message(
+private[platcluster] case class Message(
+    //uid:String,
     source:String,
+    //
     msgType:MessageType,
+    //
     content:String,
+    //
+    expire:Option[Future[Int]],
+    //
+    response:Option[Promise[Message]]
 )
 
 //
-object Message:
+private[platcluster] object Message:
+    // message convert to request
     given Conversion[Message,Command] =  ???
     given Conversion[Message,AppendEntriesReq] =  ???
     given Conversion[Message,AppendEntriesResp] = ???
     given Conversion[Message,RequestVoteReq] = ???
     given Conversion[Message,RequestVoteResp] = ???
+    //
+    // convert to json
+    given Conversion[RequestVoteResp,String] = ???
+    given Conversion[RequestVoteReq,String] = ???
+    given Conversion[AppendEntriesResp,String] = ???
+    given Conversion[AppendEntriesReq,String] = ???
+    given Conversion[Command,String] = ???
+    // convert request to message.
+    given Conversion[RequestVoteResp,Message] = ???
+    given Conversion[RequestVoteReq,Message] = ???
+    given Conversion[AppendEntriesResp,Message] = ???
+    given Conversion[AppendEntriesReq,Message] = ???
+    given Conversion[Command,Message] = ???
 
