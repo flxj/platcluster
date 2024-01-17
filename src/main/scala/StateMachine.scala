@@ -16,9 +16,20 @@
 
 package platcluster
 
-import scala.util.{Try}
+import scala.util.Try
+import platdb.DB 
+
+private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
+    def init(): Try[Unit] = ???
+    def apply(log:LogEntry):Try[Result] = ???
+    def get(key:String):Try[String] = ???
+    def put(key:String, value:String):Try[Unit] = ???
+    def delete (key:String):Try[Unit] = ???
 
 //
-private[platcluster] class HttpTransport(cm:RaftConsensusModule) extends Transport:
-    def RequestVote(peer: Peer, req: RequestVoteReq): Try[RequestVoteResp] = ???
-    def AppendEntries(peer: Peer, req: AppendEntriesReq): Try[AppendEntriesResp] = ???
+private[platcluster] class MemoryFSM() extends StateMachine:
+    def init(): Try[Unit] = ???
+    def apply(log:LogEntry):Try[Result] = ???
+    def get(key:String):Try[String] = ???
+    def put(key:String, value:String):Try[Unit] = ???
+    def delete (key:String):Try[Unit] = ???

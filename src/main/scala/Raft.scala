@@ -17,7 +17,7 @@
 package platcluster
 
 import scala.collection.mutable.{ArrayBuffer,Map,Queue}
-import scala.concurrent.{Future,Await}
+import scala.concurrent.{Future,Promise,Await}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.util.{Try,Failure,Success}
@@ -25,8 +25,20 @@ import scala.util.Random
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.lang.Thread
+import java.time.Instant
 
-case class RaftOptions(id:String,transportType:String,maxLogEntriesPerRequest:Int,electionTimeout:Int,peers:List[(String,String,Int)])
+case class RaftOptions(
+    //
+    id:String,
+    //
+    transportType:String,
+    //
+    maxLogEntriesPerRequest:Int,
+    heartbeatInterval:Int,
+    electionTimeout:Int,
+    confDir:String,
+    peers:List[(String,String,Int)]
+)
 
 class RaftState(id:String):
     var role:String = Raft.RoleFollower
@@ -44,17 +56,22 @@ object Raft:
     val StatusStop = "stopped"
     val StatusUnknown = "unknown"
 
+    val transHttp = "http"
+    val transGRPC = "grpc"
+
     val defaultHeartbeatInterval = 50 // Millisecond
     val defaultElectionTimeout = 150 // 
 
     val exceptionAlreadyRunning = new Exception("raft node has already running")
     val exceptionNoTransport = new Exception("not found transport")
+    val exceptionNotLeader = new Exception("current server is not raft leader")
+    val exceptionCmdTimeout = new Exception("command has already timeout")
     //
-    def apply(ops:RaftOptions,fsm:StateMachine,log:LogStorage):RaftConsensusModule = new Raft(ops,fsm,log)
+    def apply(ops:RaftOptions,fsm:StateMachine,log:LogStorage):RaftModule = new Raft(ops,fsm,log)
         
 
 // log entries; each entry contains command for state machine, and term when entry was received by leader (first index is 1)
-private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage) extends RaftConsensusModule:
+private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage) extends RaftModule:
     private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
     
     // candidateId that received vote in current term (or null if none)
@@ -118,92 +135,11 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             lock.readLock().unlock()
     //
     def maxLogEntriesPerRequest:Int = ops.maxLogEntriesPerRequest
-    def heartbeatInterval: Int = ???
+    def heartbeatInterval: Int = ops.heartbeatInterval
     def setElectionTimeout(d: Int): Unit = ???                                                                                                            
     def setHeartbeatInterval(d: Int): Unit = ???
-
-    def init():Try[Unit] = 
-        try
-            lock.writeLock().lock()
-            if stat.status == Raft.StatusRun then
-                Success(None)
-            else
-                //
-                ops.transportType match
-                    case "http" => trans = Some(new HttpTransport(this))
-                    case "grpc" => trans = Some(new RPCTransport(this))
-                    case _ => throw new Exception(s"not support such transport type ${ops.transportType}")
-                //
-                log.init() match
-                    case Failure(e) => throw e
-                    case Success(_) => None
-                fsm.init() match
-                    case Failure(e) => throw e
-                    case Success(_) => None
-                //
-                stopSignal = false
-                stat.status = Raft.StatusInit
-                stat.errInfo = ""
-                waitGroup.clear()
-                Success(None)
-        catch
-            case e:Exception => 
-                stat.status = Raft.StatusFail
-                stat.errInfo = e.getMessage()
-                Failure(e)
-        finally
-            lock.writeLock().unlock()
-
-    private var stopSignal:Boolean = false
-    private var waitGroup:ArrayBuffer[Future[Unit]] = ArrayBuffer[Future[Unit]]()
-    //
-    def start():Try[Unit] = 
-        val s = state
-        if s.status == Raft.StatusRun then
-            Failure(Raft.exceptionAlreadyRunning)
-        else
-            stopSignal = false
-            setRole(Raft.RoleFollower)
-            log.latest match
-                case Failure(e) => Failure(e)
-                case Success(entry) =>
-                    currentTerm = entry.term
-                    val res = Future[Unit] {
-                        mainLoop()
-                    }
-                    waitGroup += res
-                    Success(setStatus(Raft.StatusRun))
-    //
-    def stop():Try[Unit] = 
-        val (_,s) = status
-        if s == Raft.StatusStop || s == Raft.StatusFail then
-            Success(None)
-        else
-            stopSignal = true
-            for w <- waitGroup do
-                Await.result(w,1.hours)
-            // TODO if need close logStorage??
-            waitGroup.clear()
-            Success(setStatus(Raft.StatusStop))
-    //
-    // TODO: convert the command to a Message,send it to raft, wait the exec result
-    def apply(cmd:Command):Try[Result] = ???
-    //
-    def apply(cmd:Command,timeout:Int):Try[Result] = ???
-    //
-    def applyAsync(cmd:Command):Future[Try[Result]] = ???
-    //
-    def applyAsync(cmd:Command,timeout:Int):Future[Try[Result]] = ???
-    //
-    def put(key:String,value:String):Try[Unit] = ???
-    def get(key:String):Try[String] = ???
-    def delete(key:String):Try[Unit] = ???
-    def joinNode(id:String,ip:String,port:Int):Try[Unit] = ???
-    def removeNode(id:String):Try[Unit] = ???
-    // TODO: create a Message,send it to msgQueue, wait a promise to get the 
-    def AppendEntries(req:AppendEntriesReq):Try[AppendEntriesResp] = ???
-    //
-    def RequestVote(req:RequestVoteReq) :Try[RequestVoteResp] = ???
+    def electionTimeout:Int = ops.electionTimeout
+    def majority:Int = ???
     //
     def term:Long = 
         try
@@ -264,8 +200,6 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         Thread.sleep(t)
         t
     }
-    def electionTimeout:Int = ops.electionTimeout
-    def majority:Int = ???
     //
     private def updateCurrentTerm(termValue:Long,name:Option[String]):Unit =
         if termValue < currentTerm then
@@ -288,9 +222,214 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         leaderId = name
         voteFor = ""
         lock.writeLock().unlock()
+    // TODO: save current node info to json file.
+    private def saveState(confDir:String):Try[Unit] = ???
+    // TODO: load current node info from json file.
+    private def loadState(confDir:String):Try[RaftNodeState] = ???
+    //
+    def init():Try[Unit] = 
+        try
+            lock.writeLock().lock()
+            if stat.status == Raft.StatusRun then
+                Success(None)
+            else
+                //
+                ops.transportType match
+                    case Raft.transHttp => trans = Some(new HttpTransport(this))
+                    case Raft.transGRPC => trans = Some(new RPCTransport(this))
+                    case _ => throw new Exception(s"not support such transport type ${ops.transportType}")
+                //
+                log.init() match
+                    case Failure(e) => throw e
+                    case Success(_) => None
+                fsm.init() match
+                    case Failure(e) => throw e
+                    case Success(_) => None
+
+                // init peers
+                for (name,ip,port) <- ops.peers do
+                    peers(name) = RaftPeer(name,ip,port,this)
+                //
+                loadState(ops.confDir) match 
+                    case Failure(e) => throw e 
+                    case Success(s) => 
+                        commitIndex = s.commitIndex
+                        for p <- s.peers do 
+                            val peer = RaftPeer(p.id,p.ip,p.port,this)
+                            peer.setNextLogIndex(p.nextIndex)
+                            peers(p.id) = peer 
+                //
+                saveState(ops.confDir) match 
+                    case Failure(e) => throw e 
+                    case Success(_) => None
+                //
+                stopSignal = false
+                stat.status = Raft.StatusInit
+                stat.errInfo = ""
+                waitGroup.clear()
+                Success(None)
+        catch
+            case e:Exception => 
+                stat.status = Raft.StatusFail
+                stat.errInfo = e.getMessage()
+                Failure(e)
+        finally
+            lock.writeLock().unlock()
+
+    private var stopSignal:Boolean = false
+    private var waitGroup:ArrayBuffer[Future[Unit]] = ArrayBuffer[Future[Unit]]()
+    //
+    def start():Try[Unit] = 
+        val s = state
+        if s.status == Raft.StatusRun then
+            Failure(Raft.exceptionAlreadyRunning)
+        else
+            stopSignal = false
+            setRole(Raft.RoleFollower)
+            log.latest match
+                case Failure(e) => Failure(e)
+                case Success(entry) =>
+                    currentTerm = entry.term
+                    // start main loop.
+                    val res = Future[Unit] {
+                        mainLoop()
+                    }
+                    waitGroup += res
+                    Success(setStatus(Raft.StatusRun))
+    //
+    def stop():Try[Unit] = 
+        val (_,s) = status
+        if s == Raft.StatusStop || s == Raft.StatusFail then
+            Success(None)
+        else
+            stopSignal = true
+            for w <- waitGroup do
+                Await.result(w,1.hours)
+            // TODO if need close logStorage??
+            waitGroup.clear()
+            Success(setStatus(Raft.StatusStop))
     //
     import MessageTypes._
     import Message._
+    import Message.msgToResult
+    import Message.cmdToStr 
+    //
+    def apply(cmd:Command,timeout:Option[Int]):Try[Result] = // TODO: use a timeout Future to process timeout
+        if cmd.op == Storage.kvOpGet then
+            get(cmd.key) match
+                case Failure(e) => Failure(e)
+                case Success(v) => Success(Result(true,"",v))
+        else 
+            val resp = Promise[Try[Message]]()
+            val msg = Message(nodeId,Cmd,cmd,Instant.now(),timeout,Some(resp))
+            sendMessage(msg)
+            //
+            var res:Option[Try[Result]] = None
+            resp.future.foreach { 
+                case Failure(e) => res = Some(Failure(e))
+                case Success(m) => res = Some(Success(msgToResult(m)))
+            }
+            res match
+                case Some(r) => r 
+                case None => Failure(new Exception("apply command failed"))
+    //
+    def apply(cmd:Command):Try[Result] = apply(cmd,None)
+    //
+    def applyAsync(cmd:Command):Future[Try[Result]] = Future {
+        apply(cmd,None)
+    }
+    //
+    def applyAsync(cmd:Command,timeout:Option[Int]):Future[Try[Result]] = Future {
+        apply(cmd,timeout)
+    }
+    //
+    def get(key:String):Try[String] = fsm.get(key)
+    //
+    def put(key:String,value:String):Try[Unit] = 
+        apply(Command(Storage.kvOpPut,key,value)) match
+            case Failure(e) => Failure(e)
+            case Success(res) => 
+                if res.success then 
+                    Success(None) 
+                else 
+                    Failure(new Exception(s"${res.err} ${res.content}"))
+    //
+    def delete(key:String):Try[Unit] = 
+        apply(Command(Storage.kvOpDel,key,"")) match
+            case Failure(e) => Failure(e)
+            case Success(res) => 
+                if res.success then 
+                    Success(None) 
+                else 
+                    Failure(new Exception(s"${res.err} ${res.content}"))
+    //
+    def joinNode(id:String,ip:String,port:Int):Try[Unit] = 
+        try
+            lock.writeLock().lock()
+            if !peers.contains(id) && id != nodeId then
+                val peer = RaftPeer(id, ip,port,this)
+                if role == Raft.RoleLeader then
+                    peer.startHeartbeat(heartbeatInterval)
+                peers(id) = peer 
+            //
+            saveState(ops.confDir) 
+        catch
+            case e:Exception => Failure(e)
+        finally
+            lock.writeLock().unlock()
+
+    //
+    def removeNode(id:String):Try[Unit] = 
+        try
+            lock.writeLock().lock()
+            if id != nodeId && peers.contains(id) then
+                val p = peers(id)
+                if role == Raft.RoleLeader then
+                    p.stopHeartbeat()
+                peers -= id
+            //
+            saveState(ops.confDir) 
+        catch
+            case e:Exception => Failure(e)
+        finally
+            lock.writeLock().unlock()
+    
+    import Message.appendReqToStr
+    import Message.msgToAppendResp
+    // create a Message,send it to msgQueue, wait a promise to get the result.
+    def AppendEntries(source:String,req:AppendEntriesReq):Try[AppendEntriesResp] = 
+        //
+        val resp = Promise[Try[Message]]()
+        val msg = Message(source,AppendEntriesRequest,req,Instant.now(),None,Some(resp))
+        sendMessage(msg)
+        //
+        var res:Option[Try[AppendEntriesResp]] = None
+        resp.future.foreach { 
+            case Failure(e) => res = Some(Failure(e))
+            case Success(m) => res = Some(Success(msgToAppendResp(m)))
+        }
+        //
+        res match
+            case Some(r) => r 
+            case None => Failure(new Exception("process request failed"))
+    //
+    import Message.voteReqToStr
+    import Message.msgToVoteResp
+    def RequestVote(source:String,req:RequestVoteReq):Try[RequestVoteResp] = 
+        //
+        val resp = Promise[Try[Message]]()
+        val msg = Message(source,RequestVoteRequest,req,Instant.now(),None,Some(resp))
+        sendMessage(msg)
+        //
+        var res:Option[Try[RequestVoteResp]] = None
+        resp.future.foreach { 
+            case Failure(e) => res = Some(Failure(e))
+            case Success(m) => res = Some(Success(msgToVoteResp(m)))
+        }
+        //
+        res match
+            case Some(r) => r 
+            case None => Failure(new Exception("process request failed"))
     //
     private def mainLoop(): Unit =
         try
@@ -303,6 +442,9 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 s = state
         catch
             case e:Exception => setFail(e)
+    //
+    import Message.appendRespToMsg
+    import Message.voteRespToMsg
     /**
       * • Upon election: send initial empty AppendEntries RPCs(heartbeat) to each server; repeat during idle periods to prevent election timeouts (§5.2)
       * 
@@ -342,23 +484,33 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 recvMessage() match
                     case None => None
                     case Some(m) => m.msgType match 
-                        case Command => 
-                            val ignore = m.expire match
-                                case None => false
-                                case Some(e) =>  if e.isCompleted then true else false
-                            if !ignore then
+                        case Cmd => 
+                            if !Message.expired(m) then
                                 processCommand(m) match
-                                    case Failure(e) => None // TODO reture this to user
-                                    case Success(_) => None
-                        case AppendEntriesResponse => processAppendEntriesResponse(m.source,m)
+                                    case Failure(e) => 
+                                        m.response match
+                                            case Some(p) => p.success(Failure(e))
+                                            case None => None
+                                    case Success(_) => None // TODO reture this result to user
+                            else 
+                                m.response match
+                                    case Some(p) => p.success(Failure(Raft.exceptionCmdTimeout))
+                                    case None => None
+                        case AppendEntriesResponse => 
+                            processAppendEntriesResponse(m.source,m)
                         case AppendEntriesRequest => 
-                            val (resp,_) = processAppendEntriesRequest(m) // TODO reture the resp by RPC
-                            
+                            val (resp,_) = processAppendEntriesRequest(m)
+                            m.response match
+                                case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                case None => None
                         case RequestVoteRequest => 
-                            val (resp,_) = processRequestVoteRequest(m) // TODO reture the resp by RPC
+                            val (resp,_) = processRequestVoteRequest(m)
+                            m.response match
+                                case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                case None => None
                         case _ => None
             catch
-                case e:Exception => None // TODO err handler
+                case e:Exception => None // TODO: error handler: for example, record then to logger
 
     /**
       * • Respond to RPCs from candidates and leaders
@@ -384,12 +536,20 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     recvMessage() match
                         case None => None
                         case Some(m) => m.msgType match
-                            case Command => 
-                                throw new Exception("NotLeaderError")  // TODO process join command
+                            case Cmd => 
+                                m.response match
+                                    case Some(p) => p.success(Failure(Raft.exceptionNotLeader))
+                                    case None => None
                             case AppendEntriesRequest => 
-                                val (resp,flush) = processAppendEntriesRequest(m) // TODO reture the resp by RPC
+                                val (resp,flush) = processAppendEntriesRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                    case None => None
                             case RequestVoteRequest => 
-                                val (resp,flush) = processRequestVoteRequest(m) // TODO reture the resp by RPC
+                                val (resp,flush) = processRequestVoteRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                    case None => None
                             case _ => None
                 catch
                     case e:Exception => None // TODO err handler
@@ -474,12 +634,20 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     recvMessage() match
                         case None => None
                         case Some(m) => m.msgType match
-                            case Command => 
-                                throw new Exception("NotLeaderError") // TODO send the error to user.
+                            case Cmd => 
+                                m.response match
+                                    case Some(p) => p.success(Failure(Raft.exceptionNotLeader))
+                                    case None => None
                             case AppendEntriesRequest => 
-                                val (resp,_) = processAppendEntriesRequest(m) // TODO reture the resp by RPC
+                                val (resp,_) = processAppendEntriesRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                    case None => None
                             case RequestVoteRequest => 
-                                val (resp,_) = processRequestVoteRequest(m) // TODO reture the resp by RPC
+                                val (resp,_) = processRequestVoteRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                    case None => None
                 catch
                     case e:Exception => None // TODO  err handler
     
@@ -603,43 +771,44 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     else 
                         Success(None)
     //
-    import platcluster.Message.given_Conversion_AppendEntriesResp_String
-    def sendAppendEntriesRequest(target:String,req:AppendEntriesReq):Unit = 
+    import Message.appendRespToStr
+    def sendAppendEntriesRequest(target:String,req:AppendEntriesReq):Try[Unit] = 
         peers.get(target) match
-            case None => throw new Exception(s"not known such peer ${target}")
+            case None => Failure(throw new Exception(s"not known such peer ${target}"))
             case Some(peer) => 
                 trans match
-                    case None => throw Raft.exceptionNoTransport
+                    case None => Failure(Raft.exceptionNoTransport)
                     case Some(tran) => tran.AppendEntries(peer,req) match 
-                        case Failure(e) => throw e 
+                        case Failure(e) => Failure(e) 
                         case Success(resp) =>
-                            if resp.success then
-                                // 
-                                if req.entries.length > 0 then
-                                    peer.setPrevLogIndex(req.entries.last.index)
-                                    /* 
-                                    // if peer append a log entry from the current term
-                                    // we set append to true
-                                    if req.Entries[len(req.Entries)-1].GetTerm() == p.server.currentTerm {
-                                        resp.append = true
-                                    }
-                                    */
-                            else 
+                            try
+                                val timestamp = Instant.now()
+                                if resp.success then
+                                    // 
+                                    if req.entries.length > 0 then
+                                        peer.setPrevLogIndex(req.entries.last.index)
+                                        /* 
+                                        // if peer append a log entry from the current term we set append to true
+                                            resp.append = true
+                                        */
+                                else 
+                                    //
+                                    if resp.term > term then 
+                                        // 
+                                        None
+                                    else if resp.term == req.term && resp.commitIndex >= peer.getPrevLogIndex then
+                                        //
+                                        peer.setPrevLogIndex(resp.commitIndex)
+                                    else if peer.getPrevLogIndex > 0 then 
+                                        //
+                                        peer.setPrevLogIndex(peer.getPrevLogIndex-1)
+                                        //
+                                        if peer.getPrevLogIndex > resp.currentLogIndex then 
+                                            peer.setPrevLogIndex(resp.currentLogIndex)
                                 //
-                                if resp.term > term then 
-                                    // this happens when there is a new leader comes up that this *leader* has not
-                                    // known yet.
-                                    // this server can know until the new leader send a ae with higher term
-                                    // or this server finish processing this response.
-                                    None
-                                else if resp.term == req.term && resp.commitIndex >= peer.prevLogIndex then
-                                    //
-                                    peer.setPrevLogIndex(resp.commitIndex)
-                                else if peer.prevLogIndex > 0 then 
-                                    //
-                                    peer.setPrevLogIndex(peer.prevLogIndex-1)
-                                    //
-                                    if peer.prevLogIndex > resp.currentLogIndex then 
-                                        peer.setPrevLogIndex(resp.currentLogIndex)
-                            //
-                            sendMessage(Message(peer.id,AppendEntriesResponse,resp,None,None))
+                                val msg = Message(peer.id,AppendEntriesResponse,resp,timestamp,None,None)
+                                Success(sendMessage(msg))
+                            catch
+                                case e:Exception => Failure(e)
+                            
+//

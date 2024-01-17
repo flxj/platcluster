@@ -27,6 +27,10 @@ private[platcluster] object Storage:
     val driverMemory = "memory:memory"
     val driverLogPlatdb = "log:platdb"
 
+    val kvOpGet = "get"
+    val kvOpPut = "put"
+    val kvOpDel = "delete"
+
     val exceptNotSupportDriver = new Exception("not support such storage driver")
 
 trait Storage:
@@ -59,18 +63,18 @@ trait ConsensusModule extends KVStorage:
     //
     def apply(cmd:Command):Try[Result]
     //
-    def apply(cmd:Command,timeout:Int):Try[Result]
+    def apply(cmd:Command,timeout:Option[Int]):Try[Result]
     //
     def applyAsync(cmd:Command):Future[Try[Result]]
     //
-    def applyAsync(cmd:Command,timeout:Int):Future[Try[Result]]
+    def applyAsync(cmd:Command,timeout:Option[Int]):Future[Try[Result]]
     // joins the node, identitifed by nodeID and reachable at addr, to the cluster.
     def joinNode(id:String,ip:String,port:Int):Try[Unit]
     // 
     def removeNode(id:String):Try[Unit]
 
 //
-trait RaftConsensusModule extends ConsensusModule:
+trait RaftModule extends ConsensusModule:
     def term:Long 
     //
     def leader:String
@@ -85,13 +89,24 @@ trait RaftConsensusModule extends ConsensusModule:
     //
     def setElectionTimeout(d:Int):Unit
     //
-    def AppendEntries(req:AppendEntriesReq):Try[AppendEntriesResp]
+    def AppendEntries(source:String,req:AppendEntriesReq):Try[AppendEntriesResp]
     //
-    def RequestVote(req:RequestVoteReq) :Try[RequestVoteResp]
+    def RequestVote(source:String,req:RequestVoteReq) :Try[RequestVoteResp]
 
 //
-trait StateMachine:
+trait StateMachine extends KVStorage:
+    /**
+      * 
+      *
+      * @return
+      */
     def init():Try[Unit]
+    /**
+      * 
+      *
+      * @param log
+      * @return
+      */
     def apply(log:LogEntry):Try[Result]
 //
 trait LogStorage:
@@ -110,42 +125,20 @@ trait LogStorage:
     def create(cmd:Command):Try[LogEntry]
 
 //
-private[platcluster] object PlatDB:
-    def apply(ops:StorageOptions):PlatDB = new PlatDB(new DB(ops.fsmPath))
+object PlatDB:
+    def apply(ops:StorageOptions):Storage = new PlatDB(new DB(ops.fsmPath))
 
 private[platcluster] class PlatDB(db:DB) extends Storage:
     def open(): Try[Unit] = db.open()
     def close(): Try[Unit] = db.close()
-    //
     def logStorage():LogStorage = new PlatDBLog(db)
-    //
     def stateMachine():StateMachine = new PlatDBFSM(db)
-//
-private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
-    def init():Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
-    def currentIndex:Long = ???
-    def commitIndex:Long = ???
-    def setCommitIndex(idx:Long):Try[Unit] = ???
-    def get(index:Long):Try[LogEntry] = ???
-    def append(entry:LogEntry):Try[Unit] = ???
-    def append(entries:Seq[LogEntry]):Try[Unit] = ???
-    def delete(index:Long):Try[Unit] = ???
-    def dropRight(n:Int):Try[Unit] = ???
-    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(cmd:Command):Try[LogEntry] = ???
-    def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
-    
-private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
-    def init(): Try[Unit] = ???
-    def apply(log:LogEntry):Try[Result] = ???
 
+object FilePlatDBStorage:
+    def apply(ops:StorageOptions):Storage = new FilePlatDBStorage(ops.logPath,new DB(ops.fsmPath))
 
-private[platcluster] object LogPlatDBStorage:
-    def apply(ops:StorageOptions):LogPlatDBStorage = 
-        new LogPlatDBStorage(ops.logPath,new DB(ops.fsmPath))
-    
-private[platcluster] class LogPlatDBStorage(logPath:String,db:DB) extends Storage:
+//   
+private[platcluster] class FilePlatDBStorage(logPath:String,db:DB) extends Storage:
     def open(): Try[Unit] = db.open()
     def close(): Try[Unit] = db.close()
     //
@@ -154,24 +147,8 @@ private[platcluster] class LogPlatDBStorage(logPath:String,db:DB) extends Storag
     def stateMachine():StateMachine = new PlatDBFSM(db)
 
 //
-private[platcluster] class AppendLog(dir:String) extends LogStorage:
-    def init():Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
-    def currentIndex:Long = ???
-    def commitIndex:Long = ???
-    def setCommitIndex(idx:Long):Try[Unit] = ???
-    def get(index:Long):Try[LogEntry] = ???
-    def append(entry:LogEntry):Try[Unit] = ???
-    def append(entries:Seq[LogEntry]):Try[Unit] = ???
-    def delete(index:Long):Try[Unit] = ???
-    def dropRight(n:Int):Try[Unit] = ???
-    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(cmd:Command):Try[LogEntry] = ???
-    def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
-    
-//
-private[platcluster] object MemoryStore:
-    def apply(ops:StorageOptions):MemoryStore = new MemoryStore()
+object MemoryStore:
+    def apply(ops:StorageOptions):Storage = new MemoryStore()
 
 private[platcluster] class MemoryStore() extends Storage:
     def open(): Try[Unit] = Success(None)
@@ -180,24 +157,3 @@ private[platcluster] class MemoryStore() extends Storage:
     def logStorage():LogStorage = new MemoryLog()
     //
     def stateMachine():StateMachine = new MemoryFSM()
-
-//
-private[platcluster] class MemoryLog() extends LogStorage:
-    def init():Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
-    def currentIndex:Long = ???
-    def commitIndex:Long = ???
-    def setCommitIndex(idx:Long):Try[Unit] = ???
-    def get(index:Long):Try[LogEntry] = ???
-    def append(entry:LogEntry):Try[Unit] = ???
-    def append(entries:Seq[LogEntry]):Try[Unit] = ???
-    def delete(index:Long):Try[Unit] = ???
-    def dropRight(n:Int):Try[Unit] = ???
-    def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(cmd:Command):Try[LogEntry] = ???
-    def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
-
-//
-private[platcluster] class MemoryFSM() extends StateMachine:
-    def init(): Try[Unit] = ???
-    def apply(log:LogEntry):Try[Result] = ???
