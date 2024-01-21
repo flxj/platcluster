@@ -19,6 +19,11 @@ package platcluster
 import scala.util.{Try}
 
 //
-private[platcluster] class RPCTransport(cm:RaftConsensusModule) extends Transport:
-    def RequestVote(peer: Peer, req: RequestVoteReq): Try[RequestVoteResp] = ???
-    def AppendEntries(peer: Peer, req: AppendEntriesReq): Try[AppendEntriesResp] = ???
+private[platcluster] class RPCTransport(ip:String,port:Int,raft:RaftModule) extends TransportServer:
+    def start():Unit = ???
+    def startAsync():Try[Unit] = ???
+    def stop():Try[Unit] = ???
+    def requestVote(peer: Peer, req: RequestVoteReq): Try[RequestVoteResp] = ???
+    def appendEntries(peer: Peer, req: AppendEntriesReq): Try[AppendEntriesResp] = ???
+    def requestVoteHandler():Try[Unit] = ???
+    def appendEntriesHandler():Try[Unit] = ???

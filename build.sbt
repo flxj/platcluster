@@ -21,6 +21,8 @@ javacOptions ++= Seq("-encoding", "utf8")
 Compile / doc / scalacOptions ++= Seq("-siteroot", "docs")
 Compile / doc / scalacOptions ++= Seq("-project", "platdb")
 
+
+// akka
 resolvers += "Akka library repository".at("https://repo.akka.io/maven")
 
 val AkkaVersion = "2.8.3"
@@ -38,6 +40,29 @@ libraryDependencies ++=Seq(
       "com.typesafe" % "config" % "1.4.3"
 )
 
+// http4s
+val http4sVersion = "0.22.15"
+val circeVersion = "0.14.6"
+
+libraryDependencies ++= Seq(
+  "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+  "org.http4s" %% "http4s-blaze-client" % http4sVersion,
+  "org.http4s" %% "http4s-dsl" % http4sVersion,
+  "org.http4s" %% "http4s-circe" % http4sVersion,
+  // Optional for auto-derivation of JSON codecs
+  "io.circe" %% "circe-generic" % circeVersion,
+  // Optional for string interpolation to JSON model
+  "io.circe" %% "circe-literal" % circeVersion,
+  "io.circe" %% "circe-parser" % circeVersion
+)
+
+//addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
+
+// json
+libraryDependencies += "com.lihaoyi" %% "upickle" % "3.1.0"
+
+
+// build
 ThisBuild / organization := "io.github.flxj"
 ThisBuild / organizationName := "platcluster"
 ThisBuild / organizationHomepage := Some(url("https://github.com/flxj/platcluster"))
@@ -57,11 +82,11 @@ ThisBuild / developers := List(
     id = "flxj",
     name = "flxj",
     email = "your@email",
-    url = url("http://your.url")
+    url = url("https://github.com/flxj")
   )
 )
 
-ThisBuild / description := "paltcluster is a raft algorithem implement by scala3."
+ThisBuild / description := "paltcluster is a key-value storage base on raft algorithem,implementd by scala."
 ThisBuild / licenses := List(
   "Apache 2" -> new URL("http://www.apache.org/licenses/LICENSE-2.0.txt")
 )

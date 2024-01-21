@@ -25,7 +25,7 @@ case class StorageOptions(driver:String,logPath:String,fsmPath:String)
 private[platcluster] object Storage:
     val driverPlatdb = "platdb:platdb"
     val driverMemory = "memory:memory"
-    val driverLogPlatdb = "log:platdb"
+    val driverFilePlatdb = "file:platdb"
 
     val kvOpGet = "get"
     val kvOpPut = "put"
@@ -89,9 +89,9 @@ trait RaftModule extends ConsensusModule:
     //
     def setElectionTimeout(d:Int):Unit
     //
-    def AppendEntries(source:String,req:AppendEntriesReq):Try[AppendEntriesResp]
+    def appendEntries(req:AppendEntriesReq):Try[AppendEntriesResp]
     //
-    def RequestVote(source:String,req:RequestVoteReq) :Try[RequestVoteResp]
+    def requestVote(req:RequestVoteReq) :Try[RequestVoteResp]
 
 //
 trait StateMachine extends KVStorage:
@@ -110,11 +110,11 @@ trait StateMachine extends KVStorage:
     def apply(log:LogEntry):Try[Result]
 //
 trait LogStorage:
-    def init():Try[Unit]
+    def init(fsm:StateMachine):Try[Unit]
     def latest:Try[LogEntry]
     def currentIndex:Long
     def commitIndex:Long
-    def setCommitIndex(idx:Long):Try[Unit]
+    def setCommitIndex(idx:Long):Try[Unit] // will apply the command to fsm,and set reault callback
     def get(index:Long):Try[LogEntry]
     def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])]
     def append(entry:LogEntry):Try[Unit]

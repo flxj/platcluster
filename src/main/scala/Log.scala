@@ -22,7 +22,7 @@ import platdb.DB
 
 //
 private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
-    def init():Try[Unit] = ???
+    def init(fsm:StateMachine):Try[Unit] = ???
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???
@@ -39,7 +39,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
 
 //
 private[platcluster] class AppendLog(dir:String) extends LogStorage:
-    def init():Try[Unit] = ???
+    def init(fsm:StateMachine):Try[Unit] = ???
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???
@@ -55,7 +55,7 @@ private[platcluster] class AppendLog(dir:String) extends LogStorage:
 
 //
 private[platcluster] class MemoryLog() extends LogStorage:
-    def init():Try[Unit] = ???
+    def init(fsm:StateMachine):Try[Unit] = ???
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???

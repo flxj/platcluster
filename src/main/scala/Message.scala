@@ -20,12 +20,40 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{Future,Promise}
 import scala.util.Try
 import java.time.Instant
+import io.circe.syntax._
+import io.circe.generic.auto._
+import io.circe._
+import io.circe.literal._
+import io.circe.parser.decode
 
+/**
+  * Represents a command that can be executed by a state machine.
+  *
+  * @param op
+  * @param key
+  * @param value
+  */
 case class Command(op:String,key:String,value:String)
 
+/**
+  * Indicates the result of command execution.
+  *
+  * @param success
+  * @param err
+  * @param content
+  */
 case class Result(success:Boolean,err:String,content:String)
 
-case class LogEntry(term:Long,index:Long,logType:Byte,cmd:String):
+/**
+  * Represents a log entry in the Raft log replication module.
+  *
+  * @param term
+  * @param index
+  * @param logType
+  * @param cmd
+  * @param response
+  */
+case class LogEntry(term:Long,index:Long,logType:Byte,cmd:Command,response:Option[Promise[Try[Result]]]):
     def getBytes:Array[Byte] = ???
 
 case class AppendEntriesReq(
@@ -51,7 +79,9 @@ case class AppendEntriesResp(
     //
     currentLogIndex:Long,
     //
-    commitIndex:Long
+    commitIndex:Long,
+    //
+    nodeId:String
 )
 
 case class RequestVoteReq(
@@ -75,7 +105,7 @@ case class RequestVoteResp(
 //
 private[platcluster] object MessageTypes extends Enumeration {
  type MessageType = Value
- val Cmd,Res, AppendEntriesRequest,AppendEntriesResponse, RequestVoteRequest,RequestVoteResponse = Value
+ val Cmd,Res, AppendEntriesRequest,AppendEntriesResponse,RequestVoteRequest,RequestVoteResponse = Value
 }
 
 import MessageTypes._
@@ -95,10 +125,9 @@ private[platcluster] case class Message(
     response:Option[Promise[Try[Message]]]
 )
 
-
 //
 private[platcluster] object Message:
-    //
+    // check the mesage already expired.
     def expired(msg:Message):Boolean =
         msg.timeout match 
             case None => false
@@ -109,27 +138,73 @@ private[platcluster] object Message:
                     val insNow = Instant.now()
                     val exp = msg.createAt.plusMillis(t)
                     insNow.isBefore(exp)
+    // 
+    given logEntryEntityEncoder: Encoder[LogEntry] = new Encoder[LogEntry] {
+        final def apply(a: LogEntry): Json = Json.obj(
+            ("term", Json.fromLong(a.term)),
+            ("index", Json.fromLong(a.index)),
+            ("logType", Json.fromInt(a.logType)),
+            ("cmd", a.cmd.asJson),
+        )
+    }
+    given logEntryEntityDecoder: Decoder[LogEntry] = new Decoder[LogEntry] {
+        final def apply(c: HCursor): Decoder.Result[LogEntry] =
+            for {
+                term <- c.downField("term").as[Long]
+                idx <- c.downField("index").as[Long]
+                logT <- c.downField("logType").as[Byte]
+                cmd <- c.downField("cmd").as[Command]
+            } yield {
+                LogEntry(term, idx,logT,cmd,None)
+            }
+    }
 
     // message convert to request
-    given msgToResult:Conversion[Message,Result] =  ???
-    given msgToCmd:Conversion[Message,Command] =  ???
-    given msgToAppendReq:Conversion[Message,AppendEntriesReq] =  ???
-    given msgToAppendResp:Conversion[Message,AppendEntriesResp] = ???
-    given msgToVoteReq:Conversion[Message,RequestVoteReq] = ???
-    given msgToVoteResp:Conversion[Message,RequestVoteResp] = ???
+    given msgToResult:Conversion[Message,Result] =  (msg:Message) => 
+        if msg.content != "" then 
+            decode[Result](msg.content) match
+                case Right(r) => r
+                case Left(e) => throw new Exception(e)
+        else 
+            Result(false,"","")
+    //
+    given msgToCmd:Conversion[Message,Command] =  (msg:Message) =>
+        decode[Command](msg.content) match
+            case Right(c) => c
+            case Left(e) => throw new Exception(e)
+    //
+    given msgToAppendReq:Conversion[Message,AppendEntriesReq] =  (msg:Message) =>
+        decode[AppendEntriesReq](msg.content) match
+            case Right(a) => a
+            case Left(e) => throw new Exception(e)
+    //
+    given msgToAppendResp:Conversion[Message,AppendEntriesResp] = (msg:Message) =>
+        decode[AppendEntriesResp](msg.content) match
+            case Right(a) => a
+            case Left(e) => throw new Exception(e)
+    //
+    given msgToVoteReq:Conversion[Message,RequestVoteReq] = (msg:Message) =>
+        decode[RequestVoteReq](msg.content) match
+            case Right(r) => r
+            case Left(e) => throw new Exception(e)
+    //
+    given msgToVoteResp:Conversion[Message,RequestVoteResp] = (msg:Message) =>
+        decode[RequestVoteResp](msg.content) match
+            case Right(r) => r 
+            case Left(e) => throw new Exception(e)
     //
     // convert to json
-    given voteRespToStr:Conversion[RequestVoteResp,String] = ???
-    given voteReqToStr:Conversion[RequestVoteReq,String] = ???
-    given appendRespToStr:Conversion[AppendEntriesResp,String] = ???
-    given appendReqToStr:Conversion[AppendEntriesReq,String] = ???
-    given cmdToStr:Conversion[Command,String] = ???
-    given resultToStr:Conversion[Result,String] = ???
+    given voteRespToJson:Conversion[RequestVoteResp,String] = (resp:RequestVoteResp) => resp.asJson.toString()
+    given voteReqToJson:Conversion[RequestVoteReq,String] = (req:RequestVoteReq) => req.asJson.toString()
+    given appendRespToJson:Conversion[AppendEntriesResp,String] = (resp:AppendEntriesResp) => resp.asJson.toString()
+    given appendReqToJson:Conversion[AppendEntriesReq,String] = (req:AppendEntriesReq) => req.asJson.toString()
+    given cmdToJson:Conversion[Command,String] = (cmd:Command) => cmd.asJson.toString()
+    given resultToJson:Conversion[Result,String] = (res:Result) => res.asJson.toString()
     // convert request to message.
-    given voteRespToMsg:Conversion[RequestVoteResp,Message] = ???
-    given voteReqToMsg:Conversion[RequestVoteReq,Message] = ???
-    given appendRespToMsg:Conversion[AppendEntriesResp,Message] = ???
-    given appendReqToMsg:Conversion[AppendEntriesReq,Message] = ???
-    given cmdToMsg:Conversion[Command,Message] = ???
-    given resultToMsg:Conversion[Result,Message] = ???
+    given voteRespToMsg:Conversion[RequestVoteResp,Message] = (resp:RequestVoteResp) => Message("",RequestVoteRequest,resp,Instant.now(),None,None)
+    given voteReqToMsg:Conversion[RequestVoteReq,Message] = (req:RequestVoteReq) => Message("",RequestVoteResponse,req,Instant.now(),None,None)
+    given appendRespToMsg:Conversion[AppendEntriesResp,Message] = (resp:AppendEntriesResp) => Message("",AppendEntriesResponse,resp,Instant.now(),None,None)
+    given appendReqToMsg:Conversion[AppendEntriesReq,Message] = (req:AppendEntriesReq) => Message("",AppendEntriesRequest,req,Instant.now(),None,None)
+    given cmdToMsg:Conversion[Command,Message] = (cmd:Command) => Message("",Cmd,cmd,Instant.now(),None,None)
+    given resultToMsg:Conversion[Result,Message] = (res:Result) => Message("",Res,res,Instant.now(),None,None)
 

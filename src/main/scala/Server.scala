@@ -26,7 +26,7 @@ private[platcluster] object PlatServer:
         val db:Try[Storage] = ops.store.driver match
             case Storage.driverPlatdb => Success(PlatDB(ops.store))
             case Storage.driverMemory => Success(MemoryStore(ops.store))
-            case Storage.driverLogPlatdb => Success(LogPlatDBStorage(ops.store))
+            case Storage.driverFilePlatdb => Success(FilePlatDBStorage(ops.store))
             case _ => Failure(Storage.exceptNotSupportDriver)
         db match
             case Failure(e) => Failure(e)

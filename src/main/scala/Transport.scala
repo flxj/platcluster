@@ -18,20 +18,58 @@ package platcluster
 
 import scala.util.{Try}
 
+/**
+  * Module for communicating with peer nodes.
+  */
 trait Transport:
     /**
-      * 
+      * Send the raft RequestVote request to the peer and wait for a response, then return it.
       *
       * @param peer
       * @param req
       * @return
       */
-    def RequestVote(peer:Peer,req:RequestVoteReq):Try[RequestVoteResp]
+    def requestVote(peer:Peer,req:RequestVoteReq):Try[RequestVoteResp]
+    /**
+      * Send the raft AppendEntries request to the peer and wait for a response, then return it.
+      *
+      * @param peer
+      * @param req
+      * @return
+      */
+    def appendEntries(peer:Peer,req:AppendEntriesReq):Try[AppendEntriesResp]
+
+/**
+  * 
+  */
+trait TransportServer extends Transport:
     /**
       * 
       *
-      * @param peer
-      * @param req
       * @return
       */
-    def AppendEntries(peer:Peer,req:AppendEntriesReq):Try[AppendEntriesResp]
+    def start():Unit
+    /**
+      * 
+      *
+      * @return
+      */
+    def startAsync():Try[Unit]
+    /**
+      * 
+      *
+      * @return
+      */
+    def stop():Try[Unit]
+    /**
+      * 
+      *
+      * @return
+      */
+    def requestVoteHandler():Try[Unit]
+    /**
+      * 
+      *
+      * @return
+      */
+    def appendEntriesHandler():Try[Unit]
