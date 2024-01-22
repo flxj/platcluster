@@ -241,18 +241,10 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     case Raft.transHttp => trans = Some(new HttpTransport(ops.host,ops.port,this))
                     case Raft.transGRPC => trans = Some(new RPCTransport(ops.host,ops.port,this))
                     case _ => throw Raft.exceptionNoSupportTrans
-                //
-                fsm.init() match
-                    case Failure(e) => throw e
-                    case Success(_) => None
-                log.init(fsm) match
-                    case Failure(e) => throw e
-                    case Success(_) => None
-
                 // init peers
                 for (name,ip,port) <- ops.peers do
                     peers(name) = RaftPeer(name,ip,port,this)
-                //
+                
                 loadState(ops.confDir) match 
                     case Failure(e) => throw e 
                     case Success(s) => 
@@ -264,6 +256,18 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 //
                 saveState(ops.confDir) match 
                     case Failure(e) => throw e 
+                    case Success(_) => None
+                //
+                fsm.init() match
+                    case Failure(e) => throw e
+                    case Success(_) => None
+                //
+                log.updateCommitIndex(commitIndex) match
+                    case Success(_) => None
+                    case Failure(e) => throw e
+                // TODO
+                log.init(fsm) match
+                    case Failure(e) => throw e
                     case Success(_) => None
                 //
                 stopSignal = false
@@ -741,7 +745,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))  
                 case Success(_) => log.append(req.entries) match
                     case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
-                    case Success(_) => log.setCommitIndex(req.leaderCommit) match 
+                    case Success(_) => log.commitLog(req.leaderCommit) match 
                         case Success(_) => resp = Some(AppendEntriesResp(currentTerm,true,log.currentIndex,log.commitIndex,nodeId))
                         case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
         resp match
@@ -766,11 +770,11 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
 
                 if commitMax > commitIdx then
                     // TODO log.sync()
-                    log.setCommitIndex(commitMax)
+                    log.commitLog(commitMax)
     //
     import Message.resultToMsg
     private def processCommandMsg(msg:Message):Try[Unit] =
-        log.create(msg) match 
+        log.create(currentTerm,msg) match 
             case Failure(e) => Failure(e)
             case Success(entry) => 
                 entry.response match
@@ -797,7 +801,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     // if only one node in cluster.
                     if peers.size == 0 then 
                         val commitIdx = log.currentIndex
-                        log.setCommitIndex(commitIdx) 
+                        log.commitLog(commitIdx) 
                     else 
                         Success(None)
     //

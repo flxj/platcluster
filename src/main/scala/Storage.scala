@@ -114,7 +114,8 @@ trait LogStorage:
     def latest:Try[LogEntry]
     def currentIndex:Long
     def commitIndex:Long
-    def setCommitIndex(idx:Long):Try[Unit] // will apply the command to fsm,and set reault callback
+    def updateCommitIndex(idx:Long):Try[Unit] 
+    def commitLog(idx:Long):Try[Unit] // will apply the command to fsm,and set reault callback
     def get(index:Long):Try[LogEntry]
     def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])]
     def append(entry:LogEntry):Try[Unit]
@@ -122,7 +123,7 @@ trait LogStorage:
     def delete(index:Long):Try[Unit]
     def dropRight(n:Int):Try[Unit]
     def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean]
-    def create(cmd:Command):Try[LogEntry]
+    def create(term:Long,cmd:Command):Try[LogEntry]
 
 //
 object PlatDB:

@@ -101,4 +101,4 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
     //
 
 private [platcluster] case class RaftPeerInfo(id:String,ip:String,port:Int,nextIndex:Long)
-private[platcluster] case class RaftNodeState(commitIndex:Long,peers:Array[RaftPeerInfo])
+private[platcluster] case class RaftNodeState(commitIndex:Long,index:Long,peers:Array[RaftPeerInfo])

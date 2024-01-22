@@ -16,15 +16,39 @@
 
 package platcluster
 
-import scala.util.Try
+import scala.util.{Try,Success,Failure}
 import platdb.DB 
+import platdb._
 
 private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
-    def init(): Try[Unit] = ???
-    def apply(log:LogEntry):Try[Result] = ???
-    def get(key:String):Try[String] = ???
-    def put(key:String, value:String):Try[Unit] = ???
-    def delete (key:String):Try[Unit] = ???
+    val bk = "data"
+    //
+    def init(): Try[Unit] = db.createCollection(bk,DB.collectionTypeBucket,0,true)
+    //
+    def apply(log:LogEntry):Try[Result] = 
+        log.cmd.op match
+            case "get" => 
+                get(log.cmd.key) match
+                    case Failure(e) => Failure(e)
+                    case Success(value) => Success(Result(true,"",value))
+            case "put"|"set" =>
+                put(log.cmd.key,log.cmd.value) match
+                    case Failure(e) => Failure(e)
+                    case Success(_) => Success(Result(true,"",""))
+            case "delele" | "del" | "remove" =>
+                delete(log.cmd.key) match
+                    case Failure(e) => Failure(e)
+                    case Success(_) => Success(Result(true,"","")) 
+            case op => Failure(new Exception(s"current StateMachine not support operation ${op}"))
+    //
+    def get(key:String):Try[String] = 
+        db.get(bk,key) match
+            case Failure(e) => Failure(e)
+            case Success((_,v)) => Success(v)
+    //
+    def put(key:String, value:String):Try[Unit] = db.put(bk,key,value)
+    //
+    def delete (key:String):Try[Unit] = db.delete(bk,true,List[String](key))
 
 //
 private[platcluster] class MemoryFSM() extends StateMachine:
