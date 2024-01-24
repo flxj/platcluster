@@ -26,14 +26,22 @@ import io.circe._
 import io.circe.literal._
 import io.circe.parser.decode
 
+val cmdTypeKVRW = "rw"
+val cmdTypeChange = "change"
+val cmdTypeNone = "none"
+val opJoin = "join"
+val opLeave = "leave"
+
+val addrFmt = "%s:%d"
+
 /**
   * Represents a command that can be executed by a state machine.
   *
-  * @param op
-  * @param key
-  * @param value
+  * @param op  
+  * @param key for join or leave type, the key should be node id. 
+  * @param value for join operation,the value should be node connection info, format is 'ip:port'
   */
-case class Command(op:String,key:String,value:String)
+case class Command(cmdType:String,op:String,key:String,value:String)
 
 /**
   * Indicates the result of command execution.
@@ -49,23 +57,22 @@ case class Result(success:Boolean,err:String,content:String)
   *
   * @param term
   * @param index
-  * @param logType
   * @param cmd
   * @param response
   */
-case class LogEntry(term:Long,index:Long,logType:Byte,cmd:Command,response:Option[Promise[Try[Result]]]):
-    def getBytes:Array[Byte] = ???
+case class LogEntry(term:Long,index:Long,cmd:Command,response:Option[Promise[Try[Result]]]):
+    def cmdType:String = cmd.cmdType
 
 case class AppendEntriesReq(
-    // server id.
+    // leaderId so follower can redirect clients.
     leaderId:String,
-    // leader’s term leaderId so follower can redirect clients
+    // leader’s term.
     term:Long,
     // term of prevLogIndex entry
     prevLogTrem:Long,
     // index of log entry immediately preceding new ones
     prevLogIndex:Long,
-    //
+    // the commit log index, leader use the field to inform followers which log can apply in local.
     leaderCommit:Long,
     // log entries to store (empty for heartbeat; may send more than one for efficiency)
     entries:Array[LogEntry]
@@ -76,11 +83,11 @@ case class AppendEntriesResp(
     term:Long,
     // true if follower contained entry matching prevLogIndex and prevLogTerm
     success:Boolean,
-    //
+    // server currnt log index.
     currentLogIndex:Long,
-    //
+    // return server commit index
     commitIndex:Long,
-    //
+    // server id, so reciver can known the response come from which peer.
     nodeId:String
 )
 
@@ -143,7 +150,6 @@ private[platcluster] object Message:
         final def apply(a: LogEntry): Json = Json.obj(
             ("term", Json.fromLong(a.term)),
             ("index", Json.fromLong(a.index)),
-            ("logType", Json.fromInt(a.logType)),
             ("cmd", a.cmd.asJson),
         )
     }
@@ -152,13 +158,11 @@ private[platcluster] object Message:
             for {
                 term <- c.downField("term").as[Long]
                 idx <- c.downField("index").as[Long]
-                logT <- c.downField("logType").as[Byte]
                 cmd <- c.downField("cmd").as[Command]
             } yield {
-                LogEntry(term, idx,logT,cmd,None)
+                LogEntry(term, idx,cmd,None)
             }
     }
-
     // message convert to request
     given msgToResult:Conversion[Message,Result] =  (msg:Message) => 
         if msg.content != "" then 
@@ -208,3 +212,5 @@ private[platcluster] object Message:
     given cmdToMsg:Conversion[Command,Message] = (cmd:Command) => Message("",Cmd,cmd,Instant.now(),None,None)
     given resultToMsg:Conversion[Result,Message] = (res:Result) => Message("",Res,res,Instant.now(),None,None)
 
+private[platcluster] case class RaftPeerInfo(id:String,ip:String,port:Int,nextIndex:Long)
+private[platcluster] case class RaftNodeState(commitIndex:Long,appliedIndex:Long,prevIndex:Long,peers:Array[RaftPeerInfo])

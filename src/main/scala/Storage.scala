@@ -71,7 +71,7 @@ trait ConsensusModule extends KVStorage:
     // joins the node, identitifed by nodeID and reachable at addr, to the cluster.
     def joinNode(id:String,ip:String,port:Int):Try[Unit]
     // 
-    def removeNode(id:String):Try[Unit]
+    def leaveNode(id:String):Try[Unit]
 
 //
 trait RaftModule extends ConsensusModule:
@@ -107,10 +107,11 @@ trait StateMachine extends KVStorage:
       * @param log
       * @return
       */
-    def apply(log:LogEntry):Try[Result]
+    def apply(cmd:Command):Try[Result]
 //
 trait LogStorage:
-    def init(fsm:StateMachine):Try[Unit]
+    def init():Try[Unit]
+    def stop():Try[Unit]
     def latest:Try[LogEntry]
     def currentIndex:Long
     def commitIndex:Long
@@ -124,6 +125,7 @@ trait LogStorage:
     def dropRight(n:Int):Try[Unit]
     def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean]
     def create(term:Long,cmd:Command):Try[LogEntry]
+    def registerApplyFunc(cmdType:String,applyF:(entry:LogEntry)=>Unit):Unit
 
 //
 object PlatDB:

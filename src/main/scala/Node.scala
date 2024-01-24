@@ -39,7 +39,7 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
     def id:String = nodeId
     def addr:(String,Int) = (ip,port)
     //
-    def getNextLogIndex:Long = ???
+    def getNextLogIndex:Long = nextIndex
     def setNextLogIndex(idx:Long):Unit = ???
     //
     def getPrevLogIndex:Long = 
@@ -49,7 +49,12 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
         finally
             lock.readLock().unlock()
     //
-    def setPrevLogIndex(idx:Long):Unit = ???
+    def setPrevLogIndex(idx:Long):Unit = 
+        try
+            lock.writeLock().lock()
+            nextIndex = idx+1
+        finally
+            lock.writeLock().unlock()
     // 
     def startHeartbeat(interval:Int):Unit = 
         try
@@ -87,6 +92,10 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
         try
             if !stopped then
                 val prevLogIdx = getPrevLogIndex
+                // try to copy maxLogEntriesPerRequest log entries and send them to target peer for replication.
+                // the entries start at prevLogIdx.target peer will check log use pervTerm and prevLogIdx,
+                // if not match, the attach it's term and logIndex in response,then leader update peer's prevLogIdx and prevTerm info,and resend appendEntries rpc.
+                // if match success, the peer will storage the entries in local logStorage, and send back success response. 
                 server.logStorage.slice(prevLogIdx, server.maxLogEntriesPerRequest) match
                     case Failure(e) => throw e
                     case Success((prevTerm,entries)) =>
@@ -99,6 +108,3 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
         catch
             case e:Exception => None // TODO err handler
     //
-
-private [platcluster] case class RaftPeerInfo(id:String,ip:String,port:Int,nextIndex:Long)
-private[platcluster] case class RaftNodeState(commitIndex:Long,index:Long,peers:Array[RaftPeerInfo])

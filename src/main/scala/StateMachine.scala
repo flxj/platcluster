@@ -25,18 +25,18 @@ private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
     //
     def init(): Try[Unit] = db.createCollection(bk,DB.collectionTypeBucket,0,true)
     //
-    def apply(log:LogEntry):Try[Result] = 
-        log.cmd.op match
+    def apply(cmd:Command):Try[Result] = 
+        cmd.op match
             case "get" => 
-                get(log.cmd.key) match
+                get(cmd.key) match
                     case Failure(e) => Failure(e)
                     case Success(value) => Success(Result(true,"",value))
             case "put"|"set" =>
-                put(log.cmd.key,log.cmd.value) match
+                put(cmd.key,cmd.value) match
                     case Failure(e) => Failure(e)
                     case Success(_) => Success(Result(true,"",""))
             case "delele" | "del" | "remove" =>
-                delete(log.cmd.key) match
+                delete(cmd.key) match
                     case Failure(e) => Failure(e)
                     case Success(_) => Success(Result(true,"","")) 
             case op => Failure(new Exception(s"current StateMachine not support operation ${op}"))

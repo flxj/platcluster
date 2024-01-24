@@ -56,12 +56,6 @@ libraryDependencies ++= Seq(
   "io.circe" %% "circe-parser" % circeVersion
 )
 
-//addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
-
-// json
-libraryDependencies += "com.lihaoyi" %% "upickle" % "3.1.0"
-
-
 // build
 ThisBuild / organization := "io.github.flxj"
 ThisBuild / organizationName := "platcluster"
