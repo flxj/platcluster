@@ -301,8 +301,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     //
     private def applyChange(entry:LogEntry):Unit = 
         val res = entry.cmd.op match
-            case opJoin => addNode("","",0) // TODO
-            case opLeave => removeNode("")  // TODO
+            case "join" => addNode("","",0) // TODO
+            case "leave" => removeNode("")  // TODO
             case _ => Success(None)
         entry.response match
             case None => None
@@ -430,7 +430,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 trans match
                     case None => None
                     case Some(svc) => svc.stop() 
-                log.stop()
+                log.close()
             finally
                 saveState(ops.confDir) match
                     case Success(_) => None
@@ -461,7 +461,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     }
                 case Some(t) => 
                     try
-                        val r = Await.wait(resp.future.result,t)
+                        val r = Await.result(resp.future,t.milliseconds)
                         // TODO process the resp
                     catch
                         case e:Exception => res = Some(Failure(e))

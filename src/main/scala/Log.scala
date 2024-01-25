@@ -100,8 +100,8 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                     if appliedIdx < entry.index && entry.index <= commitIdx then
                                         funcs.get(entry.cmdType) match 
                                             case None => throw new Exception(s"recovery from log failed: not support command type ${entry.cmdType}")
-                                            case Some(applyF) => 
-                                                applyF(entry)
+                                            case Some(applyLog) => 
+                                                applyLog(entry)
                                                 applied = entry.index
                     if applied > appliedIdx then 
                         appliedIdx = applied        
@@ -230,7 +230,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                 case Some(r) =>
                                     if !r.isCompleted then 
                                         r.failure(new Exception(s"not support such command type ${entry.cmdType}"))
-                            case Success(applyF) => applyF(entry)
+                            case Some(applyLog) => applyLog(entry)
                         //
                         if entry.cmdType == cmdTypeChange  then 
                             break
@@ -416,7 +416,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
 //
 private[platcluster] class AppendLog(dir:String) extends LogStorage:
     def init():Try[Unit] = ???
-    def stop():Try[Unit] = ???
+    def close():Try[Unit] = ???
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???
@@ -435,7 +435,7 @@ private[platcluster] class AppendLog(dir:String) extends LogStorage:
 //
 private[platcluster] class MemoryLog() extends LogStorage:
     def init():Try[Unit] = ???
-    def stop():Try[Unit] = ???
+    def close():Try[Unit] = ???
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???

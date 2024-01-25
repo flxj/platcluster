@@ -53,7 +53,7 @@ private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
 //
 private[platcluster] class MemoryFSM() extends StateMachine:
     def init(): Try[Unit] = ???
-    def apply(log:LogEntry):Try[Result] = ???
+    def apply(cmd:Command):Try[Result] = ???
     def get(key:String):Try[String] = ???
     def put(key:String, value:String):Try[Unit] = ???
     def delete (key:String):Try[Unit] = ???

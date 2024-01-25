@@ -138,7 +138,7 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
         println(r)
         println("==============================")
         println("[3] test vote POST2")
-        val voteR2 = Command("get","abc","xxx")
+        val voteR2 = Command("rw","get","abc","xxx")
         val req3 = POST(voteR2.asJson, uri"/requestVote")
         try
             val resp3 = requestVoteService.orNotFound.run(req3).unsafeRunSync() 
@@ -156,7 +156,7 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
         //
         println("==============================")
         println("[2] test append POST")
-        val ent = LogEntry(1,2,3,Command("put","kkk","vvv"),None)
+        val ent = LogEntry(1,2,Command("rw","put","kkk","vvv"),None)
         val appR = AppendEntriesReq("iiiii",1,100,200,300,Array[LogEntry](ent))
         //
         val req2 = POST(appR.asJson, uri"/appendEntries")

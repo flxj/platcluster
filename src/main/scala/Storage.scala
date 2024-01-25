@@ -111,7 +111,7 @@ trait StateMachine extends KVStorage:
 //
 trait LogStorage:
     def init():Try[Unit]
-    def stop():Try[Unit]
+    def close():Try[Unit]
     def latest:Try[LogEntry]
     def currentIndex:Long
     def commitIndex:Long

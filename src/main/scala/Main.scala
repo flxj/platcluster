@@ -43,8 +43,8 @@ object PlatCluster:
         import Message.appendReqToMsg
         import Message.msgToAppendReq
        
-        val cmd = Command("get","kkkk","vvvv")
-        val logs = Array[LogEntry](LogEntry(100,200,1,cmd,None))
+        val cmd = Command("rw","get","kkkk","vvvv")
+        val logs = Array[LogEntry](LogEntry(100,200,cmd,None))
         val req = AppendEntriesReq("iiii",100,200,300,400,logs)
 
         val msg = appendReqToMsg(req)
