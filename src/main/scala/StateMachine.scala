@@ -16,7 +16,9 @@
 
 package platcluster
 
+import scala.collection.mutable.Map
 import scala.util.{Try,Success,Failure}
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import platdb.DB 
 import platdb._
 
@@ -52,7 +54,9 @@ private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
 
 //
 private[platcluster] class MemoryFSM() extends StateMachine:
-    def init(): Try[Unit] = ???
+    private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
+    private val data = Map[String,String]()
+    def init(): Try[Unit] = Success(None)
     def apply(cmd:Command):Try[Result] = ???
     def get(key:String):Try[String] = ???
     def put(key:String, value:String):Try[Unit] = ???

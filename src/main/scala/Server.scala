@@ -67,16 +67,17 @@ private[platcluster] trait JsonSupport extends SprayJsonSupport with DefaultJson
 //
 private[platcluster] object PlatServer:
     def apply(ops:ServerOptions):Try[PlatServer] = 
-        val db:Try[Storage] = ops.store.driver match
-            case Storage.driverPlatdb => Success(PlatDB(ops.store))
-            case Storage.driverMemory => Success(MemoryStore(ops.store))
-            case Storage.driverFilePlatdb => Success(FilePlatDBStorage(ops.store))
-            case _ => Failure(Storage.exceptNotSupportDriver)
-        db match
-            case Failure(e) => Failure(e)
-            case Success(store) =>
-                val raft = Raft(ops.raft,store.stateMachine(),store.logStorage())
-                Success(new PlatServer(ops.name,ops.host,ops.port,store,raft))
+        try
+            val db:Storage = ops.store.driver match
+                case Storage.driverPlatdb => PlatDB(ops.store)
+                case Storage.driverMemory => MemoryStore(ops.store)
+                case Storage.driverFilePlatdb => FilePlatDBStorage(ops.store)
+                case _ => throw Storage.exceptNotSupportDriver
+            
+            val raft = Raft(ops.raft,db.stateMachine(),db.logStorage())
+            Success(new PlatServer(ops.name,ops.host,ops.port,db,raft))
+        catch
+            case e:Exception => Failure(e)
 //
 private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Storage,cm:ConsensusModule) extends JsonSupport:
     // needed to run the route

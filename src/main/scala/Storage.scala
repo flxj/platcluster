@@ -32,6 +32,7 @@ private[platcluster] object Storage:
     val kvOpDel = "delete"
 
     val exceptNotSupportDriver = new Exception("not support such storage driver")
+    val exceptFSMPathIsNull = new Exception("state machine storage path is null")
 
 trait Storage:
     def open():Try[Unit]
@@ -129,12 +130,33 @@ trait LogStorage:
 
 //
 object PlatDB:
-    def apply(ops:StorageOptions):Storage = new PlatDB(new DB(ops.fsmPath))
-
-private[platcluster] class PlatDB(db:DB) extends Storage:
-    def open(): Try[Unit] = db.open()
-    def close(): Try[Unit] = db.close()
-    def logStorage():LogStorage = new PlatDBLog(db)
+    def apply(ops:StorageOptions):Storage = 
+        if ops.fsmPath == "" then 
+            throw Storage.exceptFSMPathIsNull
+        if ops.logPath != ops.fsmPath then 
+            new PlatDB(new DB(ops.fsmPath),Some(new DB(ops.logPath)))
+        else
+            new PlatDB(new DB(ops.fsmPath),None)
+//
+private[platcluster] class PlatDB(db:DB,logDB:Option[DB]) extends Storage:
+    def open(): Try[Unit] = 
+        db.open() match
+            case Failure(e) => Failure(e)
+            case Success(_) => 
+                logDB match
+                    case None => Success(None)
+                    case Some(d) => d.open()
+    def close(): Try[Unit] = 
+        db.close() match
+            case Failure(e) => Failure(e)
+            case Success(_) => 
+                logDB match
+                    case None => Success(None)
+                    case Some(d) => d.close()
+    def logStorage():LogStorage = 
+        logDB match
+            case None => new PlatDBLog(db)
+            case Some(log) => new PlatDBLog(log)
     def stateMachine():StateMachine = new PlatDBFSM(db)
 
 object FilePlatDBStorage:

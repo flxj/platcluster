@@ -31,7 +31,7 @@ case class RaftOptions(
     //
     id:String,
     //
-    host:String,
+    ip:String,
     //
     port:Int,
     //
@@ -70,6 +70,7 @@ object Raft:
 
     val defaultHeartbeatInterval = 50 // Millisecond
     val defaultElectionTimeout = 150 // 
+    val defaultMaxLog = 100
 
     val exceptionAlreadyRunning = new Exception("raft node has already running")
     val exceptionNoTransport = new Exception("not found transport")
@@ -320,8 +321,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             else
                 //
                 ops.transportType match
-                    case Raft.transHttp => trans = Some(new HttpTransport(ops.host,ops.port,this))
-                    case Raft.transGRPC => trans = Some(new RPCTransport(ops.host,ops.port,this))
+                    case Raft.transHttp => trans = Some(new HttpTransport(ops.ip,ops.port,this))
+                    case Raft.transGRPC => trans = Some(new RPCTransport(ops.ip,ops.port,this))
                     case _ => throw Raft.exceptionNoSupportTrans
                 
                 // if snapshort exists, use it overwrite ops.

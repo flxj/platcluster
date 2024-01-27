@@ -1,6 +1,6 @@
 val scala3Version = "3.2.2"
 val projectName = "platcluster"
-val projectVersion = "0.1.0-SNAPSHOT"
+val projectVersion = "0.2.0-SNAPSHOT"
 
 lazy val root = project
   .in(file("."))
