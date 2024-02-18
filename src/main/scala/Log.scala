@@ -59,24 +59,43 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             db.createCollection(name,DB.collectionTypeBList,0,true) match
                 case Failure(e) => return Failure(e)
                 case Success(_) => None
+            db.createCollection(meta,DB.collectionTypeBucket,0,true) match
+                case Failure(e) => return Failure(new Exception(s"create log meta error ${e}"))
+                case Success(_) => None
             // load meta info.
-            db.get(meta,commitIdxKey) match
-                case Success((_,n)) =>
-                    val idx = n.toLong 
-                    if idx > commitIdx then 
-                        commitIdx = idx 
-                case Failure(e) => 
-                    if !DB.isNotExists(e) then 
-                        return Failure(e)
+            db.view(
+                (tx:Transaction) =>
+                    //
+                    given t:Transaction = tx 
+                    val bk = openBucket(meta)
+                    bk.get(commitIdxKey) match
+                        case Failure(e) =>
+                            if !DB.isNotExists(e) then 
+                                throw new Exception(s"get commit idx error ${e}")
+                        case Success(n) =>
+                            val idx = n.toLong 
+                            if idx > commitIdx then 
+                                commitIdx = idx 
+            ) match
+                case Failure(e) => return Failure(e)
+                case Success(_) => None
             //
-            db.get(meta,lastAppliedKey) match
-                case Success((_,n)) =>
-                    val idx = n.toLong 
-                    if idx > appliedIdx then 
-                        appliedIdx = idx 
-                case Failure(e) => 
-                    if !DB.isNotExists(e) then 
-                        return Failure(e)
+            db.view(
+                (tx:Transaction) =>
+                    //
+                    given t:Transaction = tx 
+                    val bk = openBucket(meta)
+                    bk.get(lastAppliedKey) match
+                        case Failure(e) =>
+                            if !DB.isNotExists(e) then 
+                                throw new Exception(s"get applied idx error ${e}")
+                        case Success(n) =>
+                            val idx = n.toLong 
+                            if idx > appliedIdx then 
+                                appliedIdx = idx
+            ) match
+                case Failure(e) => return Failure(e)
+                case Success(_) => None
             //
             prevIndex = appliedIdx
            
@@ -189,6 +208,16 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
         finally
             lock.readLock().unlock()
     //
+    def setCommitIndex(idx:Long):Unit = 
+        try
+            lock.writeLock().lock()
+            if idx > commitIdx then
+                commitIdx = idx
+            else 
+                Success(None)
+        finally
+            lock.writeLock().unlock()
+       //
     def updateCommitIndex(idx:Long):Try[Unit] = 
         try
             lock.writeLock().lock()
@@ -420,6 +449,7 @@ private[platcluster] class AppendLog(dir:String) extends LogStorage:
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???
+    def setCommitIndex(idx:Long):Unit = ???
     def updateCommitIndex(idx:Long):Try[Unit] = ???
     def commitLog(idx:Long):Try[Unit] = ???
     def get(index:Long):Try[LogEntry] = ???
@@ -439,6 +469,7 @@ private[platcluster] class MemoryLog() extends LogStorage:
     def latest:Try[LogEntry] = ???
     def currentIndex:Long = ???
     def commitIndex:Long = ???
+    def setCommitIndex(idx:Long):Unit = ???
     def updateCommitIndex(idx:Long):Try[Unit] = ???
     def commitLog(idx:Long):Try[Unit] = ???
     def get(index:Long):Try[LogEntry] = ???

@@ -21,6 +21,7 @@ import scala.util.{Try,Success,Failure}
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import platdb.DB 
 import platdb._
+import platdb.Collection._
 
 private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
     val bk = "data"
@@ -44,9 +45,17 @@ private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
             case op => Failure(new Exception(s"current StateMachine not support operation ${op}"))
     //
     def get(key:String):Try[String] = 
-        db.get(bk,key) match
+        var s:String = ""
+        db.view(
+            (tx:Transaction) =>
+                given t:Transaction = tx 
+                val b = openBucket(bk)
+                b.get(key) match
+                    case Failure(e) => throw e 
+                    case Success(v) => s = v 
+        ) match
             case Failure(e) => Failure(e)
-            case Success((_,v)) => Success(v)
+            case Success(_) => Success(s)
     //
     def put(key:String, value:String):Try[Unit] = db.put(bk,key,value)
     //

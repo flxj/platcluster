@@ -40,7 +40,13 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
     def addr:(String,Int) = (ip,port)
     //
     def getNextLogIndex:Long = nextIndex
-    def setNextLogIndex(idx:Long):Unit = ???
+    //
+    def setNextLogIndex(idx:Long):Unit = 
+        try 
+            lock.writeLock().lock()
+            nextIndex = idx
+        finally
+            lock.writeLock().unlock()
     //
     def getPrevLogIndex:Long = 
         try

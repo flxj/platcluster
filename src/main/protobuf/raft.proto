@@ -1,8 +1,6 @@
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
-
-option java_package = "platservice.grpc";
+option java_package = "transport.grpc";
 
 package protobuf;
 
@@ -16,7 +14,8 @@ message Command {
 message LogEntry {
     int64 term = 1;
     int64 index = 2;
-    optional google.protobuf.Timestamp timestamp = 3;
+    string timestamp = 3;
+    Command cmd = 4;
 }
 
 message RequestVoteRequest {
@@ -29,7 +28,7 @@ message RequestVoteRequest {
 message AppendEntriesRequest {
     int64 term = 1;
     int64 prevLogTrem = 2;
-    int64 prevLogIndex = 3;.
+    int64 prevLogIndex = 3;
     int64 leaderCommit = 4;
     string leaderId = 5;
     repeated LogEntry entries = 6;

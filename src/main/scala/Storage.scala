@@ -116,6 +116,7 @@ trait LogStorage:
     def latest:Try[LogEntry]
     def currentIndex:Long
     def commitIndex:Long
+    def setCommitIndex(idx:Long):Unit
     def updateCommitIndex(idx:Long):Try[Unit] 
     def commitLog(idx:Long):Try[Unit] // will apply the command to fsm,and set reault callback
     def get(index:Long):Try[LogEntry]

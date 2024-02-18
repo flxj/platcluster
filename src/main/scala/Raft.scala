@@ -287,10 +287,16 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     // load current node info from json file.
     private def loadState(confDir:String):Try[RaftNodeState] = 
         val path = confDir+File.separator+"snapshort"
-        val content = Source.fromFile(path).mkString
-        decode[RaftNodeState](content) match
-            case Left(e) => Failure(new Exception(e)) // TODO: if not exists, return a empty 
-            case Right(s) => Success(s)
+        try
+            val content = Source.fromFile(path).mkString
+            decode[RaftNodeState](content) match
+                case Left(e) => throw e
+                case Right(s) => Success(s)
+        catch
+            case e: java.io.FileNotFoundException => 
+                val s = RaftNodeState(0L,0L,0L,Array[RaftPeerInfo]())
+                Success(s)
+            case e1:Exception => Failure(e1)
     //
     private def applyKV(entry:LogEntry):Unit = 
         val res = fsm.apply(entry.cmd) 
@@ -302,8 +308,15 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     //
     private def applyChange(entry:LogEntry):Unit = 
         val res = entry.cmd.op match
-            case "join" => addNode("","",0) // TODO
-            case "leave" => removeNode("")  // TODO
+            case "join" => 
+                //
+                val i = entry.cmd.value.indexOf(":")
+                if i <= 0 || i == entry.cmd.value.length() then 
+                    throw new Exception(s"known add node addr ${entry.cmd.value}")
+                val ip = entry.cmd.value.substring(0,i)
+                val port = entry.cmd.value.substring(i+1).toInt 
+                addNode(entry.cmd.key,ip,port) 
+            case "leave" => removeNode(entry.cmd.key)
             case _ => Success(None)
         entry.response match
             case None => None
@@ -351,6 +364,15 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 fsm.init() match
                     case Failure(e) => throw e
                     case Success(_) => None
+                
+                log.registerApplyFunc(cmdTypeKVRW,applyKV)
+                log.registerApplyFunc(cmdTypeChange,applyChange)
+
+                log.setCommitIndex(commitIndex)
+
+                log.init() match
+                    case Failure(e) => throw e
+                    case Success(_) => None
                 //
                 log.updateCommitIndex(commitIndex) match
                     case Success(_) => None
@@ -362,13 +384,6 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 //log.updatePrevIndex() match
                 //    case Success(_) => None
                 //    case Failure(e) => throw e
-
-                log.registerApplyFunc(cmdTypeKVRW,applyKV)
-                log.registerApplyFunc(cmdTypeChange,applyChange)
-
-                log.init() match
-                    case Failure(e) => throw e
-                    case Success(_) => None
                 //
                 stopSignal = false
                 stat.status = Raft.StatusInit
@@ -463,7 +478,9 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 case Some(t) => 
                     try
                         val r = Await.result(resp.future,t.milliseconds)
-                        // TODO process the resp
+                        r match
+                            case Success(m) =>  res = Some(Success(msgToResult(m)))
+                            case Failure(e) => res = Some(Failure(e))
                     catch
                         case e:Exception => res = Some(Failure(e))
             //
@@ -582,7 +599,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     private def mainLoop(): Unit =
         try
             var s = state
-            while s.status != Raft.StatusStop && s.status != Raft.StatusFail do 
+            while !stopSignal && s.status != Raft.StatusStop && s.status != Raft.StatusFail do 
                 s.role match
                     case Raft.RoleCandicate => runCandicate()
                     case Raft.RoleFollower => runFollower()
