@@ -67,7 +67,133 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
                 //
                 cm.requestVote(vote) match
                     case Failure(e) => throw e
+                    case Success(resp) => 
+                        //println(s"[debug] HTTP get requestVote response ${resp}")
+                        Ok(resp.asJson)
+            catch
+                case e:Exception => 
+                    //println(s"[debug] HTTP requestVote error ${e}")
+                    IO(Response(Status(500)))
+    }
+    /**
+      * process append log entries request.
+      */
+    val appendEntriesService = HttpRoutes.of[IO] {
+        case GET -> Root / "appendEntries"  => Ok("")
+        case req @ POST -> Root / "appendEntries" =>
+            try
+                val app = req.as[AppendEntriesReq].unsafeRunSync()
+                //
+                //println(s"[debug] HTTP get app resp ${app}")
+                //
+                cm.appendEntries(app) match
+                    case Failure(e) => throw e
                     case Success(resp) => Ok(resp.asJson)
+            catch
+                case e:Exception => 
+                    //println(s"[debug] HTTP appendEntries error ${e}")
+                    IO(Response(Status(500)))
+    }
+    // root 
+    val rootService = HttpRoutes.of[IO] {
+        case GET -> Root => Ok(s"This is PlatCluster Raft Service\n")
+    }
+
+    implicit val cs: ContextShift[IO] = IO.contextShift(global)
+    implicit val timer: Timer[IO] = IO.timer(global)
+
+    //
+    private val services = appendEntriesService <+> requestVoteService
+    private val httpApp = Router("/" -> rootService, "/raft" -> services).orNotFound
+    private var fiber:Option[Fiber[IO, Nothing]] = None
+    // create a http server and run it sync.
+    def start():Unit = 
+        val server = BlazeServerBuilder[IO](global)
+            .bindHttp(port, host)
+            .withHttpApp(httpApp)
+            .resource
+        val fiber = server.use(_ => IO.never).start.unsafeRunSync()
+    // create a http server and run it async.
+    def startAsync():Try[Unit] = 
+        val server = BlazeServerBuilder[IO](global)
+            .bindHttp(port, host)
+            .withHttpApp(httpApp)
+            .resource
+        
+        val f = Future {
+            fiber = Some(server.use(_ => IO.never).start.unsafeRunSync())
+        }
+        Success(None)
+    // stop the http server.
+    def stop():Try[Unit] = 
+        fiber match
+            case None => None
+            case Some(f) => f.cancel.unsafeRunSync()
+        Success(None)
+    //
+    private val blockingPool = Executors.newFixedThreadPool(16)
+    private val blocker = Blocker.liftExecutorService(blockingPool)
+    private val httpClient: Client[IO] = JavaNetClientBuilder[IO](blocker).create
+    //
+    private val voteUrl = "http://%s:%d/raft/requestVote"
+    private val entriesUrl = "http://%s:%d/raft/appendEntries"
+    // 
+    def requestVote(peer:Peer,req:RequestVoteReq):Try[RequestVoteResp] = 
+        val (h,p) = peer.addr
+        Uri.fromString(voteUrl.format(h,p)) match
+            case Left(e) => Failure(new Exception(e))
+            case Right(u) =>
+                val postReq = POST(req.asJson,u)
+                try
+                    httpClient.run(postReq).use {
+                        case Status.Successful(r) => r.attemptAs[RequestVoteResp].leftMap(_.message).value
+                        case r => r.as[String].map(b => Left(s"Request $postReq failed with status ${r.status.code} and body $b"))
+                    }.unsafeRunSync() match
+                        case Left(e) => throw new Exception(e)
+                        case Right(resp) => Success(resp)
+                catch
+                    case e:Exception => Failure(e)
+    //
+    def appendEntries(peer:Peer,req:AppendEntriesReq):Try[AppendEntriesResp] = 
+        val (h,p) = peer.addr
+        Uri.fromString(entriesUrl.format(h,p)) match
+            case Left(e) => Failure(new Exception(e))
+            case Right(u) =>
+                val postReq = POST(req.asJson,u)
+                try
+                    httpClient.run(postReq).use {
+                        case Status.Successful(r) => r.attemptAs[AppendEntriesResp].leftMap(_.message).value
+                        case r => r.as[String].map(b => Left(s"Request $postReq failed with status ${r.status.code} and body $b"))
+                    }.unsafeRunSync() match
+                        case Left(e) => throw new Exception(e)
+                        case Right(resp) => Success(resp)
+                catch
+                    case e:Exception => Failure(e)
+    //
+    def requestVoteHandler():Try[Unit] = Success(None)
+    def appendEntriesHandler():Try[Unit] = Success(None)
+
+//////////////////////////////
+private[platcluster] class HttpTransport2(host:String,port:Int):
+    implicit val requestVoteReqEntityDecoder: EntityDecoder[IO, RequestVoteReq] = jsonOf[IO, RequestVoteReq]
+    implicit val requestVoteRespEntityDecoder: EntityDecoder[IO, RequestVoteResp] = jsonOf[IO, RequestVoteResp]
+    implicit val commandEntityDecoder: EntityDecoder[IO, Command] = jsonOf[IO, Command]
+    implicit val appendEntriesReqEntityDecoder: EntityDecoder[IO, AppendEntriesReq] = jsonOf[IO, AppendEntriesReq]
+    implicit val appendEntriesRespEntityDecoder: EntityDecoder[IO, AppendEntriesResp] = jsonOf[IO, AppendEntriesResp]
+    
+    /**
+      * process vote request.
+      */
+    val requestVoteService = HttpRoutes.of[IO] {
+        case GET -> Root / "requestVote" => Ok("")
+        case req @ POST -> Root / "requestVote" =>
+            try
+                val vote = req.as[RequestVoteReq].unsafeRunSync()
+                //
+                //println(s"[debug] receved vote request: ${vote}")
+                //
+                val resp = RequestVoteResp(vote.term+1,true)
+                Ok(resp.asJson)
             catch
                 case e:Exception => IO(Response(Status(500)))
     }
@@ -80,9 +206,10 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
             try
                 val app = req.as[AppendEntriesReq].unsafeRunSync()
                 //
-                cm.appendEntries(app) match
-                    case Failure(e) => throw e
-                    case Success(resp) => Ok(resp.asJson)
+                //println(s"[debug] receved appendEntries request: ${app}")
+                //
+                val resp = AppendEntriesResp(app.term+1,true,100,100,"kkkkk")
+                Ok(resp.asJson)
             catch
                 case e:Exception => IO(Response(Status(500)))
     }
@@ -172,8 +299,7 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
     private val voteUrl = "http://%s:%d/raft/requestVote"
     private val entriesUrl = "http://%s:%d/raft/appendEntries"
     // 
-    def requestVote(peer:Peer,req:RequestVoteReq):Try[RequestVoteResp] = 
-        val (h,p) = peer.addr
+    def requestVote(h:String,p:Int,req:RequestVoteReq):Try[RequestVoteResp] = 
         Uri.fromString(voteUrl.format(h,p)) match
             case Left(e) => Failure(new Exception(e))
             case Right(u) =>
@@ -188,9 +314,8 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
                 catch
                     case e:Exception => Failure(e)
     //
-    def appendEntries(peer:Peer,req:AppendEntriesReq):Try[AppendEntriesResp] = 
-        val (h,p) = peer.addr
-        Uri.fromString(voteUrl.format(h,p)) match
+    def appendEntries(h:String,p:Int,req:AppendEntriesReq):Try[AppendEntriesResp] = 
+        Uri.fromString(entriesUrl.format(h,p)) match
             case Left(e) => Failure(new Exception(e))
             case Right(u) =>
                 val postReq = POST(req.asJson,u)

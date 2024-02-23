@@ -232,6 +232,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     private def randomTimer(start:Int,end:Int):Future[Int] = Future {
         val t = Random.between(start,end)
         Thread.sleep(t)
+        //println(s"[debug] timer=${t}ms")
         t
     }
     //
@@ -249,6 +250,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         //
         if stat.role != Raft.RoleFollower then 
             setRole(Raft.RoleFollower)
+           // println(s"[debug] updateCurrentTerm  --> follower")
         
         lock.writeLock().lock()
         currentTerm = termValue
@@ -285,7 +287,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                p.close()
             lock.readLock().unlock()
     // load current node info from json file.
-    private def loadState(confDir:String):Try[RaftNodeState] = 
+    private def loadState(confDir:String):Try[RaftNodeState] =
         val path = confDir+File.separator+"snapshort"
         try
             val content = Source.fromFile(path).mkString
@@ -305,6 +307,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             case Some(p) =>
                 if !p.isCompleted then 
                     p.success(res)
+                    println(s"[debug] applyKV set response")
     //
     private def applyChange(entry:LogEntry):Unit = 
         val res = entry.cmd.op match
@@ -362,28 +365,28 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     case Success(_) => None
                 //
                 fsm.init() match
-                    case Failure(e) => throw e
-                    case Success(_) => None
-                
-                log.registerApplyFunc(cmdTypeKVRW,applyKV)
-                log.registerApplyFunc(cmdTypeChange,applyChange)
-
-                log.setCommitIndex(commitIndex)
-
-                log.init() match
-                    case Failure(e) => throw e
+                    case Failure(e) => throw new Exception(s"init fsm failed ${e}")
                     case Success(_) => None
                 //
-                log.updateCommitIndex(commitIndex) match
-                    case Success(_) => None
-                    case Failure(e) => throw e
-                
                 //log.updateAppliedIndex(commitIndex) match
                 //    case Success(_) => None
                 //    case Failure(e) => throw e
                 //log.updatePrevIndex() match
                 //    case Success(_) => None
                 //    case Failure(e) => throw e
+
+                log.registerApplyFunc(cmdTypeKVRW,applyKV)
+                log.registerApplyFunc(cmdTypeChange,applyChange)
+
+                log.setCommitIndex(commitIndex) 
+
+                log.init() match
+                    case Failure(e) => throw new Exception(s"init log storage failed ${e}")
+                    case Success(_) => None
+                //
+                log.updateCommitIndex(commitIndex) match
+                    case Success(_) => None
+                    case Failure(e) => throw new Exception(s"update commit index failed ${e}")
                 //
                 stopSignal = false
                 stat.status = Raft.StatusInit
@@ -438,11 +441,13 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         else
             try
                 stopSignal = true
+                println(s"waiting future completed...")
                 for w <- waitGroup do
                     Await.result(w,1.hours)
                 //
                 waitGroup.clear()
                 setStatus(Raft.StatusStop)
+                println(s"stopping transport...")
                 trans match
                     case None => None
                     case Some(svc) => svc.stop() 
@@ -469,20 +474,17 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             sendMessage(msg)
             // 
             var res:Option[Try[Result]] = None
-            timeout match
-                case None => 
-                    resp.future.foreach { 
-                        case Failure(e) => res = Some(Failure(e))
-                        case Success(m) => res = Some(Success(msgToResult(m)))
-                    }
-                case Some(t) => 
-                    try
-                        val r = Await.result(resp.future,t.milliseconds)
-                        r match
-                            case Success(m) =>  res = Some(Success(msgToResult(m)))
-                            case Failure(e) => res = Some(Failure(e))
-                    catch
-                        case e:Exception => res = Some(Failure(e))
+
+            try
+                val t = timeout match
+                case None => 1.hours
+                case Some(d) => d.milliseconds
+
+                Await.result(resp.future,t) match
+                    case Success(m) =>  res = Some(Success(msgToResult(m)))
+                    case Failure(e) => res = Some(Failure(e))
+            catch
+                case e:Exception => res = Some(Failure(e))
             //
             res match
                 case Some(r) => r 
@@ -570,10 +572,15 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         sendMessage(msg)
         //
         var res:Option[Try[AppendEntriesResp]] = None
-        resp.future.foreach { 
-            case Failure(e) => res = Some(Failure(e))
-            case Success(m) => res = Some(Success(msgToAppendResp(m)))
-        }
+        try
+            Await.result(resp.future,Duration(10, MINUTES)) match
+                case Failure(e) => res = Some(Failure(e))
+                case Success(m) =>  
+                    val vr = msgToAppendResp(m)
+                    res = Some(Success(vr))
+                    //println(s"[debug] get append message process RESULT ${vr}")
+        catch
+            case e:Exception => res = Some(Failure(e))
         //
         res match
             case Some(r) => r 
@@ -586,12 +593,20 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         val msg = Message("",RequestVoteRequest,req,Instant.now(),None,Some(resp))
         sendMessage(msg)
         //
-        var res:Option[Try[RequestVoteResp]] = None
-        resp.future.foreach { 
-            case Failure(e) => res = Some(Failure(e))
-            case Success(m) => res = Some(Success(msgToVoteResp(m)))
-        }
+        //println(s"[debug] call raft requestVote method, wait message process")
         //
+        var res:Option[Try[RequestVoteResp]] = None
+        try
+            Await.result(resp.future,Duration(5, MINUTES)) match
+                case Failure(e) => res = Some(Failure(e))
+                case Success(m) =>  
+                    val vr = msgToVoteResp(m)
+                    res = Some(Success(vr))
+                    //println(s"[debug] get vote message process RESULT ${vr}")
+        catch
+            case e:Exception => res = Some(Failure(e))
+
+        //println(s"[debug] get request vote res")
         res match
             case Some(r) => r 
             case None => Failure(new Exception("process requestVote request failed"))
@@ -628,18 +643,25 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
       * • If there exists an N such that N > commitIndex, a majority of matchIndex[i] ≥ N, and log[N].term == currentTerm:set commitIndex = N (§5.3, §5.4)
       */
     private def runLeader():Unit = 
+        //println(s"[debug] run as leader")
         var logIdx = 0L
         log.latest match 
             case Failure(e) => throw e
             case Success(entry) => logIdx = entry.index
         //
-        for (_,p) <- peers do
+        for (name,p) <- peers do
             // init the peer's prevLogIndex with leader's logIndex
             p.setPrevLogIndex(logIdx)
             // start heartbeat to the peer.
             p.startHeartbeat(heartbeatInterval)
+            //println(s"[debug] start heartbeat to ${name}")
         //
         // TODO: Upon election
+        //val e = Future {
+        //    apply(Command(cmdTypeNone,"","",""),None) match
+        //        case Failure(e) => println(s"[debug] apply none cmd error ${e}")
+        //        case Success(_) => println(s"[debug] applied none cmd")
+       // }
         //
         while role == Raft.RoleLeader && !stopSignal do 
             try
@@ -681,7 +703,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                     case None => None
                             case _ => None
             catch
-                case e:Exception => None // TODO: error handler: for example, record then to logger
+                case e:Exception => println(s"[debug] leader process message error ${e}") // TODO: error handler: for example, record then to logger
         //
         syncedPeer.clear()
 
@@ -691,6 +713,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
       * • If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate
       */
     private def runFollower():Unit = 
+        println(s"[debug] run as follower")
         // randomly init a timer from range [electionTimeout,electionTimeout*2] for timeout.
         var timeout = randomTimer(electionTimeout,electionTimeout*2)
         // run follower.
@@ -703,6 +726,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 // timeout condition is triggered: become candicate
                 if timeout.isCompleted then 
                     setRole(Raft.RoleCandicate)
+                    println(s"[debug] follower --> candicate")
                 else 
                     // process request from other servers.
                     try
@@ -713,21 +737,26 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                     case None => None
                                     case Some(p) => p.failure(Raft.exceptionNotLeader) 
                                 case AppendEntriesRequest => 
-                                    val (resp,flush) = processAppendEntriesRequest(m)
+                                    val (resp,f) = processAppendEntriesRequest(m) 
+                                    flush = f 
                                     m.response match
                                         case Some(p) => p.success(Success(appendRespToMsg(resp)))
                                         case None => None
+                                    //println(s"[debug] after process app req,flush value is ${flush}")
                                 case RequestVoteRequest => 
-                                    val (resp,flush) = processRequestVoteRequest(m)
+                                    val (resp,f) = processRequestVoteRequest(m)
+                                    flush = f 
                                     m.response match
                                         case Some(p) => p.success(Success(voteRespToMsg(resp)))
                                         case None => None
+                                    //println(s"[debug] after process vote req,flush value is ${flush}")
                                 case _ => None
                     catch
-                        case e:Exception => None // TODO err handler
+                        case e:Exception => println(s"[debug] follower process message error ${e}") // TODO err handler
                 //
                 if flush then 
                     timeout = randomTimer(electionTimeout,electionTimeout*2)
+                    //println(s"[debug] flushed timer")
     /**
       * On conversion to candidate, start election:
       *
@@ -763,6 +792,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
 
         while role == Raft.RoleCandicate && !stopSignal do
             if voteContinue then
+                //println(s"[debug] start once elect...(electionTimeout=${electionTimeout}ms)")
                 // do once elect
                 currentTerm += 1
                 voteFor = nodeId
@@ -771,37 +801,46 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     val rv:Future[Try[RequestVoteResp]] = Future {
                         trans match
                             case None => Failure(Raft.exceptionNoTransport)
-                            case Some(tran) => tran.requestVote(p,RequestVoteReq(currentTerm,nodeId,lastLogIndex,lastLogTerm))
+                            case Some(tran) => 
+                                val req = RequestVoteReq(currentTerm,nodeId,lastLogIndex,lastLogTerm)
+
+                                //println(s"[debug] send vote request ${req} to peer ${name}")
+                                tran.requestVote(p,req)
                     }
                     rv.onComplete {
-                        case Failure(_) => None // TODO: maybe we need record the failure info to logger
+                        case Failure(e) => println(s"[debug] request vote error ${e}") // TODO: maybe we need record the failure info to logger
                         case Success(r) => r match
-                            case Failure(_) => None
+                            case Failure(e) => None //println(s"[debug] requestVote error ${e}")
                             case Success(resp) =>
                                 if processVoteResponse(resp) then
-                                    voteGranted += 1       
+                                    voteGranted += 1
+                                    //println(s"[debug] receved a vote ${voteGranted}")       
                     }
                 //
                 voteGranted = 1
                 timeout = randomTimer(electionTimeout, electionTimeout*2)
                 voteContinue = false
-            // If received enough votes then stop waiting for more votes. And return from the candidate loop
+                //println(s"[debug] vote self ${voteGranted}")
+            
+            // If received enough votes then stop waiting for more votes. 
+            // And return from the candidate loop.
             if voteGranted >= majority then
                 setRole(Raft.RoleLeader)
+                println(s"[debug] candicate --> leader")
             else if stopSignal then
                 setStatus(Raft.StatusStop)
             else if timeout.isCompleted then
                 // current election timeout,we need start next round.
                 voteContinue = true
+                //println(s"[debug] elect timeout")
             else 
                 try
                     recvMessage() match
                         case None => None
                         case Some(m) => m.msgType match
-                            case Cmd => 
-                                m.response match
-                                    case Some(p) => p.failure(Raft.exceptionNotLeader)
-                                    case None => None
+                            case Cmd => m.response match
+                                case Some(p) => p.failure(Raft.exceptionNotLeader)
+                                case None => None
                             case AppendEntriesRequest => 
                                 val (resp,_) = processAppendEntriesRequest(m)
                                 m.response match
@@ -810,10 +849,13 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                             case RequestVoteRequest => 
                                 val (resp,_) = processRequestVoteRequest(m)
                                 m.response match
-                                    case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                    case Some(p) => 
+                                        p.success(Success(voteRespToMsg(resp)))
+                                        //println(s"[debug] set vote callback success")
                                     case None => None
+                            case _ => None 
                 catch
-                    case e:Exception => None // TODO  err handler
+                    case e:Exception => println(s"[debug] candicate process message error ${e}") // TODO  err handler
     
     /* 
       * • If commitIndex > lastApplied: increment lastApplied, apply log[lastApplied] to state machine
@@ -839,6 +881,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         var termValue:Long = 0L
         var voteGranted:Boolean = false
 
+        //println(s"[debug] process vote request ${req}")
         // reject the vote if request term is smaller than current term.
         if req.term < term then
             termValue = currentTerm
@@ -861,6 +904,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         //
         if voteGranted then
             voteFor = req.candidateId
+            //println(s"[debug] vote for ${voteFor}")
         //
         (RequestVoteResp(termValue,voteGranted),voteGranted)
     
@@ -889,6 +933,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 // if current server is candicate, it should become follower.
                 if stat.role == Raft.RoleCandicate then
                     setRole(Raft.RoleFollower)
+                    println(s"[debug] candicate --> follower")
                 //
                 leaderId = Some(req.leaderId)
             //
@@ -898,12 +943,18 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             // 2. append the entries to current log
             // 3. commit some entries according the leaderCommit value.
             log.dropRightFrom(req.prevLogIndex,req.prevLogTrem) match
-                case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))  
+                case Failure(e) => 
+                    println(s"[debug] dropRight error ${e}")
+                    resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))  
                 case Success(_) => log.append(req.entries) match
-                    case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
+                    case Failure(e) => 
+                        println(s"[debug] append entries error ${e}")
+                        resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
                     case Success(_) => log.commitLog(req.leaderCommit) match 
                         case Success(_) => resp = Some(AppendEntriesResp(currentTerm,true,log.currentIndex,log.commitIndex,nodeId))
-                        case Failure(e) => resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
+                        case Failure(e) => 
+                            println(s"[debug] commit error ${e}")
+                            resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
         resp match
             case None => throw new Exception("response append entries request failed")
             case Some(r) => (r,updated)
@@ -912,6 +963,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     private val syncedPeer:Map[String,Boolean] = Map[String,Boolean]()
     // only leader need process this message.
     private def processAppendEntriesResponse(resp:AppendEntriesResp):Unit = 
+        //println(s"[debug] process appendEntries response")
         if resp.term > term then
             // if the term value lager than current server, hhe server need become follower.
             updateCurrentTerm(resp.term,None)
@@ -930,17 +982,24 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 val commitMax = arr(majority-1)
                 val commitIdx = log.commitIndex
 
-                if commitMax > commitIdx then
+                if commitMax > commitIdx then 
                     log.commitLog(commitMax)
-                    commitIndex = log.commitIndex
+                    commitIndex = commitMax 
+                    println(s"[debug] set commitLog ${commitMax}")
+                
         // we ignore the response if resp.success == false.
         // because update peers log index info has completed in method sendAppendEntriesRequest
     //
     import Message.resultToMsg
     // only leader can process such message.
-    private def processCommandMsg(msg:Message):Try[Unit] =
+    private def processCommandMsg(msg:Message):Try[Unit] = 
+        println(s"[debug] process command msg")
         // create a log entry according to the command message.
-        log.create(currentTerm,msg) match 
+        val callback = msg.response match 
+            case None => false
+            case Some(_) => true
+        // 
+        log.create(currentTerm,msg,callback) match 
             case Failure(e) => Failure(e)
             case Success(entry) => entry.response match
                 case None => None
@@ -948,22 +1007,28 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     // TODO: add f to waitGroup
 
                     // add a callback to transport the command result to caller.
-                    val f = Future { msg.response match
-                        case None => None
-                        case Some(resp) => ep.future.foreach {
-                            case Failure(e) => 
-                                if !resp.isCompleted then
-                                    resp.failure(e)
-                            case Success(r) =>
-                                if !resp.isCompleted then
-                                    resp.success(Success(resultToMsg(r)))
-                        }
-                    } 
+                    val f = Future { 
+                        println(s"[debug] start callback future")
+                        msg.response match
+                            case None => None
+                            case Some(resp) => ep.future.foreach {
+                                case Failure(e) => 
+                                    if !resp.isCompleted then
+                                        resp.failure(e)
+                                case Success(r) =>
+                                    if !resp.isCompleted then
+                                        resp.success(Success(resultToMsg(r)))
+                                        println(s"[debug] set callback resultToMsg")
+                            }
+                    }
+                    
+                    // 
                 // append the entry to local logStorage,
                 // and then the background heartbeat mechanism try to replication it to followers.
                 log.append(entry) match 
                     case Failure(e) => Failure(e)
                     case Success(_) =>
+                        println(s"[debug] append a log entry (${entry.term},${entry.index})")
                         // set self has synced.
                         syncedPeer(nodeId) = true
                         // if only one node in cluster,we donot need replicate it,just commit it immediately.

@@ -57,14 +57,15 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                 return Success(None)
             // init log list.
             db.createCollection(name,DB.collectionTypeBList,0,true) match
-                case Failure(e) => return Failure(e)
+                case Failure(e) => return Failure(new Exception(s"create log storage error ${e}"))
                 case Success(_) => None
+            //
             db.createCollection(meta,DB.collectionTypeBucket,0,true) match
                 case Failure(e) => return Failure(new Exception(s"create log meta error ${e}"))
                 case Success(_) => None
             // load meta info.
             db.view(
-                (tx:Transaction) =>
+                (tx:Transaction) => 
                     //
                     given t:Transaction = tx 
                     val bk = openBucket(meta)
@@ -122,6 +123,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                             case Some(applyLog) => 
                                                 applyLog(entry)
                                                 applied = entry.index
+                                                println(s"[debug] applied entry ${entry}")
                     if applied > appliedIdx then 
                         appliedIdx = applied        
             ) match
@@ -208,22 +210,22 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
         finally
             lock.readLock().unlock()
     //
-    def setCommitIndex(idx:Long):Unit = 
-        try
-            lock.writeLock().lock()
-            if idx > commitIdx then
-                commitIdx = idx
-            else 
-                Success(None)
-        finally
-            lock.writeLock().unlock()
-       //
     def updateCommitIndex(idx:Long):Try[Unit] = 
         try
             lock.writeLock().lock()
             if idx > commitIdx then
                 commitIdx = idx
                 db.put(meta,commitIdxKey,commitIdx.toString)
+            else 
+                Success(None)
+        finally
+            lock.writeLock().unlock()
+    //
+    def setCommitIndex(idx:Long):Unit = 
+        try
+            lock.writeLock().lock()
+            if idx > commitIdx then
+                commitIdx = idx
             else 
                 Success(None)
         finally
@@ -237,6 +239,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             if !initialized then 
                 return Failure(new Exception("log storage not init"))
             
+            println(s"[debug] start to commit log ${idx}")
             // set commitIdx value,and apply log entries to fsm.
             var i = idx
             if i > prevIndex+ entries.length then 
@@ -246,8 +249,8 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             // if there are log entries already commited,we cannot commit them again.
             if i >= commitIdx then  
                 breakable(
-                    for j <- Range((commitIdx+1).toInt,(i+1).toInt,1) do 
-                        val k = i - prevIndex -1
+                    for j <- Range((oldCommit+1).toInt,(i+1).toInt,1) do  
+                        val k = j-prevIndex-1
                         val entry = entries(k.toInt)
                         //
                         commitIdx = entry.index 
@@ -259,7 +262,9 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                 case Some(r) =>
                                     if !r.isCompleted then 
                                         r.failure(new Exception(s"not support such command type ${entry.cmdType}"))
-                            case Some(applyLog) => applyLog(entry)
+                            case Some(applyLog) => 
+                                applyLog(entry)
+                                println(s"[debug] applyLog in logStorage")
                         //
                         if entry.cmdType == cmdTypeChange  then 
                             break
@@ -301,8 +306,11 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                     case Success(_) => None
                     case Failure(e) => throw e
         ) match
-            case Success(_) => Success(entries++=entry)
+            case Success(_) => 
+                println(s"[debug] append entries idx [${entry.head.index},${entry.last.index}]")
+                Success(entries++=entry)
             case Failure(e) => Failure(e)
+        
     //
     def append(entry:LogEntry):Try[Unit] = append(List[LogEntry](entry))
     //
@@ -319,9 +327,9 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             if entries.length > 0 then 
                 val e = entries.last
                 if entry.term < e.term then 
-                    throw new Exception()
+                    throw new Exception(s"append entry term ${entry.term } < latest log term ${e.term}") 
                 else if entry.term == e.term && entry.index <= e.index then 
-                    throw new Exception()
+                    throw new Exception(s"append entry index ${entry.index } < latest log index ${e.index}")
             //
             appendEntries(entrySeq)
         catch
@@ -402,20 +410,26 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                     remove(index) match
                         case Failure(e) => throw e
                         case Success(_) => entries.dropRight((entries.length+prevIndex-index).toInt)
+                            
             Success(true)
         catch
             case e:Exception => Failure(e)
         finally
             lock.writeLock().unlock()
     //
-    def create(term:Long,cmd:Command):Try[LogEntry] = 
+    import scala.concurrent.Promise
+    def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry] =  
         try
             lock.readLock().lock()
             //
             var nextIdx = prevIndex+1
             if entries.length > 0 then 
                 nextIdx = entries.last.index+1
-            Success(LogEntry(term,nextIdx,cmd,None))
+            if callback then 
+                val r = Promise[Try[Result]]()
+                Success(LogEntry(term,nextIdx,cmd,Some(r))) 
+            else 
+                Success(LogEntry(term,nextIdx,cmd,None))
         finally
             lock.readLock().unlock()
     // limit take continue count entries start at index, dnot contains 'index'.
@@ -458,7 +472,7 @@ private[platcluster] class AppendLog(dir:String) extends LogStorage:
     def delete(index:Long):Try[Unit] = ???
     def dropRight(n:Int):Try[Unit] = ???
     def dropRightFrom(prevIndex:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(term:Long,cmd:Command):Try[LogEntry] = ???
+    def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry] = ???
     def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
     def registerApplyFunc(cmdType:String,applyF:(entry:LogEntry)=>Unit):Unit = ???
 
@@ -478,6 +492,6 @@ private[platcluster] class MemoryLog() extends LogStorage:
     def delete(index:Long):Try[Unit] = ???
     def dropRight(n:Int):Try[Unit] = ???
     def dropRightFrom(prevIndex:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(term:Long,cmd:Command):Try[LogEntry] = ???
+    def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry] = ???
     def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
     def registerApplyFunc(cmdType:String,applyF:(entry:LogEntry)=>Unit):Unit = ???

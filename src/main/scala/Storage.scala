@@ -126,7 +126,7 @@ trait LogStorage:
     def delete(index:Long):Try[Unit]
     def dropRight(n:Int):Try[Unit]
     def dropRightFrom(prevIdx:Long,prevTerm:Long):Try[Boolean]
-    def create(term:Long,cmd:Command):Try[LogEntry]
+    def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry]
     def registerApplyFunc(cmdType:String,applyF:(entry:LogEntry)=>Unit):Unit
 
 //
