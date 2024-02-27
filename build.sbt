@@ -1,6 +1,6 @@
 val scala3Version = "3.2.2"
 val projectName = "platcluster"
-val projectVersion = "0.2.0-SNAPSHOT"
+val projectVersion = "0.3.0-SNAPSHOT"
 
 lazy val root = project
   .in(file("."))
@@ -21,16 +21,17 @@ javacOptions ++= Seq("-encoding", "utf8")
 Compile / doc / scalacOptions ++= Seq("-siteroot", "docs")
 Compile / doc / scalacOptions ++= Seq("-project", "platcluster")
 
-//Compile / PB.targets := Seq(
-// scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
-//)
+enablePlugins(AkkaGrpcPlugin)
+/*
+Compile / PB.targets := Seq(
+  scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
+)
 
-// (optional) If you need scalapb/scalapb.proto or anything from google/protobuf/*.proto
-//libraryDependencies ++= Seq(
-//    "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion % "protobuf",
-//    "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
-//    "io.grpc" % "grpc-netty" % scalapb.compiler.Version.grpcJavaVersion
-//)
+libraryDependencies ++= Seq(
+    "io.grpc" % "grpc-netty" % scalapb.compiler.Version.grpcJavaVersion,
+    "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
+)
+*/
 
 // akka
 resolvers += "Akka library repository".at("https://repo.akka.io/maven")

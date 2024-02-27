@@ -71,7 +71,6 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
                 def run():Unit = heartbeat()
             }
             timer.schedule(task,0,interval.toLong)
-            //println(s"[debug] heartbeat to ${id} start")
         catch
             case e:Exception => throw e
         finally
@@ -96,7 +95,6 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
 
     //
     private def heartbeat():Unit = 
-        //println(s"[debug] heartbeat to ${id}")
         try
             if !stopped then
                 val prevLogIdx = getPrevLogIndex
@@ -110,8 +108,6 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
                         val term = server.currentTerm
                         val commitIdx = server.commitIndex
                         val req = AppendEntriesReq(server.nodeId,term,prevTerm,prevLogIdx,commitIdx,entries)
-                        if entries.length > 0 then 
-                            println(s"[debug] heartbeat to ${id}, entries count ${entries.length}  index [${entries.head.index},${entries.last.index}]")
                         server.sendAppendEntriesRequest(nodeId,req) match 
                             case Failure(e) => throw e 
                             case Success(_) => None

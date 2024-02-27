@@ -1,8 +1,9 @@
 syntax = "proto3";
 
-option java_package = "transport.grpc";
+option java_multiple_files = true;
+option java_package = "raft.transport";
 
-package protobuf;
+package raft.transport;
 
 message Command {
     string cmdType = 1;

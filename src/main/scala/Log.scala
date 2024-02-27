@@ -123,7 +123,6 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                             case Some(applyLog) => 
                                                 applyLog(entry)
                                                 applied = entry.index
-                                                println(s"[debug] applied entry ${entry}")
                     if applied > appliedIdx then 
                         appliedIdx = applied        
             ) match
@@ -239,7 +238,6 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             if !initialized then 
                 return Failure(new Exception("log storage not init"))
             
-            println(s"[debug] start to commit log ${idx}")
             // set commitIdx value,and apply log entries to fsm.
             var i = idx
             if i > prevIndex+ entries.length then 
@@ -264,7 +262,6 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                         r.failure(new Exception(s"not support such command type ${entry.cmdType}"))
                             case Some(applyLog) => 
                                 applyLog(entry)
-                                println(s"[debug] applyLog in logStorage")
                         //
                         if entry.cmdType == cmdTypeChange  then 
                             break
@@ -306,9 +303,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                     case Success(_) => None
                     case Failure(e) => throw e
         ) match
-            case Success(_) => 
-                println(s"[debug] append entries idx [${entry.head.index},${entry.last.index}]")
-                Success(entries++=entry)
+            case Success(_) => Success(entries++=entry)
             case Failure(e) => Failure(e)
         
     //
@@ -449,7 +444,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                     val start = (index-prevIndex).toInt
                     val end = (index-prevIndex+count).toInt
                     if end >= entries.length then
-                        Success((entries(start-1).term,entries.toArray))
+                        Success((entries(start-1).term,entries.slice(start,entries.length).toArray))
                     else 
                         Success((entries(start-1).term,entries.slice(start,end).toArray))
         catch

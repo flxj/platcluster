@@ -67,13 +67,9 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
                 //
                 cm.requestVote(vote) match
                     case Failure(e) => throw e
-                    case Success(resp) => 
-                        //println(s"[debug] HTTP get requestVote response ${resp}")
-                        Ok(resp.asJson)
+                    case Success(resp) => Ok(resp.asJson)
             catch
-                case e:Exception => 
-                    //println(s"[debug] HTTP requestVote error ${e}")
-                    IO(Response(Status(500)))
+                case e:Exception => IO(Response(Status(500)))
     }
     /**
       * process append log entries request.
@@ -84,15 +80,11 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
             try
                 val app = req.as[AppendEntriesReq].unsafeRunSync()
                 //
-                //println(s"[debug] HTTP get app resp ${app}")
-                //
                 cm.appendEntries(app) match
                     case Failure(e) => throw e
                     case Success(resp) => Ok(resp.asJson)
             catch
-                case e:Exception => 
-                    //println(s"[debug] HTTP appendEntries error ${e}")
-                    IO(Response(Status(500)))
+                case e:Exception => IO(Response(Status(500)))
     }
     // root 
     val rootService = HttpRoutes.of[IO] {
@@ -190,8 +182,6 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
             try
                 val vote = req.as[RequestVoteReq].unsafeRunSync()
                 //
-                //println(s"[debug] receved vote request: ${vote}")
-                //
                 val resp = RequestVoteResp(vote.term+1,true)
                 Ok(resp.asJson)
             catch
@@ -205,8 +195,6 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
         case req @ POST -> Root / "appendEntries" =>
             try
                 val app = req.as[AppendEntriesReq].unsafeRunSync()
-                //
-                //println(s"[debug] receved appendEntries request: ${app}")
                 //
                 val resp = AppendEntriesResp(app.term+1,true,100,100,"kkkkk")
                 Ok(resp.asJson)
