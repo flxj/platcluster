@@ -22,6 +22,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.util.{Try,Failure,Success}
 import scala.util.Random
+import scala.language.implicitConversions
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.lang.Thread
@@ -111,29 +112,29 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     def logStorage:LogStorage = log
     //
     def role:String = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             stat.role
         finally
             lock.readLock().unlock()
     //
     def state:RaftState = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             stat
         finally
             lock.readLock().unlock()
     //
     def status:(String,String) =
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             (stat.role,stat.status)
         finally
             lock.readLock().unlock()
     //
     def leader: String = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             leaderId match
                 case Some(ld) => ld 
                 case None => ""
@@ -141,9 +142,9 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             lock.readLock().unlock()
     //
     def members: Seq[String] = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
-            (for (k,v) <- peers yield k).toArray
+            (for (k,v) <- peers yield k).toIndexedSeq
         finally
             lock.readLock().unlock()
     //
@@ -152,36 +153,36 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     def electionTimeout:Int = electionDuration
     //
     def setElectionTimeout(d: Int): Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             electionDuration = d 
         finally
             lock.writeLock().unlock()
     //                                                                                                            
     def setHeartbeatInterval(d: Int): Unit =
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             heartbeatDuration = d 
         finally
             lock.writeLock().unlock()
     //
     def majority:Int = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             (peers.size+1)/2+1
         finally
             lock.readLock().unlock()
     //
     def term:Long = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             currentTerm
         finally
             lock.readLock().unlock()
     //
     private def recvMessage():Option[Message] = 
+        msgLock.lock()
         try 
-            msgLock.lock()
             if msgQueue.length > 0 then
                 Some(msgQueue.dequeue())
             else 
@@ -190,15 +191,15 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             msgLock.unlock()
     //
     private def sendMessage(msg:Message):Unit = 
+        msgLock.lock()
         try 
-            msgLock.lock()
             msgQueue.enqueue(msg)
         finally
             msgLock.unlock()
     //
     private def setStatus(s:String):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             stat.status = s 
             if s != Raft.StatusRun then
                 leaderId = None
@@ -206,8 +207,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             lock.writeLock().unlock()
     //
     private def setRole(r:String):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             stat.role = r 
             if r == leader then 
                 leaderId = Some(nodeId)
@@ -216,8 +217,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             lock.writeLock().unlock()
     //
     private def setFail(err:Throwable):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             stat.status = Raft.StatusFail
             stat.errInfo = err.getMessage()
             leaderId = None
@@ -267,8 +268,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     private def saveState(confDir:String):Try[Unit] = 
         val path = confDir+File.separator+"snapshort"
         var p:PrintWriter = null 
+        lock.readLock().lock()
         try 
-            lock.readLock().lock()
             p = new PrintWriter(new File(path))
             val infos = (
                 for (_,p) <- peers yield 
@@ -307,8 +308,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     p.success(res)
     //
     private def applyChange(entry:LogEntry):Unit = 
-        val res = entry.cmd.op match
-            case "join" => 
+        val res = entry.cmd.opType match
+            case OperationType.Change => 
                 //
                 val i = entry.cmd.value.indexOf(":")
                 if i <= 0 || i == entry.cmd.value.length() then 
@@ -316,7 +317,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 val ip = entry.cmd.value.substring(0,i)
                 val port = entry.cmd.value.substring(i+1).toInt 
                 addNode(entry.cmd.key,ip,port) 
-            case "leave" => removeNode(entry.cmd.key)
+            case OperationType.Leave => removeNode(entry.cmd.key)
             case _ => Success(None)
         entry.response match
             case None => None
@@ -324,15 +325,14 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 if !p.isCompleted then 
                     res match
                         case Failure(e) => p.failure(e)
-                        case Success(_) => p.success(Success(Result(true,"","")))
+                        case Success(_) => p.success(Success(ExecResult(true,"","")))
     //
     def init():Try[Unit] = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             if stat.status == Raft.StatusRun then
                 Success(None)
             else
-                //
                 ops.transportType match
                     case Raft.transHttp => trans = Some(new HttpTransport(ops.ip,ops.port,this))
                     case Raft.transGRPC => trans = Some(new RPCTransport(ops.ip,ops.port,this))
@@ -372,8 +372,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 //    case Success(_) => None
                 //    case Failure(e) => throw e
 
-                log.registerApplyFunc(cmdTypeKVRW,applyKV)
-                log.registerApplyFunc(cmdTypeChange,applyChange)
+                log.registerApplyFunc(CommandType.ReadWrite,applyKV)
+                log.registerApplyFunc(CommandType.Change,applyChange)
 
                 log.setCommitIndex(commitIndex) 
 
@@ -460,17 +460,17 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     import Message.cmdToJson 
     import Message.cmdToMsg
     //
-    def apply(cmd:Command,timeout:Option[Int]):Try[Result] = 
-        if cmd.op == Storage.kvOpGet then
+    def apply(cmd:Command,timeout:Option[Int]):Try[ExecResult] = 
+        if cmd.opType == OperationType.Get then
             get(cmd.key) match
                 case Failure(e) => Failure(e)
-                case Success(v) => Success(Result(true,"",v))
+                case Success(v) => Success(ExecResult(true,"",v))
         else 
             val resp = Promise[Try[Message]]()
             val msg = Message(nodeId,Cmd,cmd,Instant.now(),timeout,Some(resp))
             sendMessage(msg)
             // 
-            var res:Option[Try[Result]] = None
+            var res:Option[Try[ExecResult]] = None
 
             try
                 val t = timeout match
@@ -487,29 +487,29 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 case Some(r) => r 
                 case None => Failure(new Exception("apply command failed"))
     //
-    def apply(cmd:Command):Try[Result] = apply(cmd,None)
+    def apply(cmd:Command):Try[ExecResult] = apply(cmd,None)
     //
-    def applyAsync(cmd:Command):Future[Try[Result]] = Future {
+    def applyAsync(cmd:Command):Future[Try[ExecResult]] = Future {
         apply(cmd,None)
     }
     //
-    def applyAsync(cmd:Command,timeout:Option[Int]):Future[Try[Result]] = Future {
+    def applyAsync(cmd:Command,timeout:Option[Int]):Future[Try[ExecResult]] = Future {
         apply(cmd,timeout)
     }
     //
     def get(key:String):Try[String] = fsm.get(key)
     //
     def put(key:String,value:String):Try[Unit] = 
-        apply(Command(cmdTypeKVRW,Storage.kvOpPut,key,value)) match
+        apply(Command(CommandType.ReadWrite,OperationType.Put,key,value)) match
             case Failure(e) => Failure(e)
             case Success(res) => 
                 if res.success then 
-                    Success(None) 
+                    Success(None)
                 else 
                     Failure(new Exception(s"${res.err} ${res.content}"))
     //
     def delete(key:String):Try[Unit] = 
-        apply(Command(cmdTypeKVRW,Storage.kvOpDel,key,"")) match
+        apply(Command(CommandType.ReadWrite,OperationType.Delete,key,"")) match
             case Failure(e) => Failure(e)
             case Success(res) => 
                 if res.success then 
@@ -518,20 +518,20 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     Failure(new Exception(s"${res.err} ${res.content}"))
     //
     def joinNode(id:String,ip:String,port:Int):Try[Unit] =
-        val cmd = Command(cmdTypeChange,opJoin,id,addrFmt.format(ip,port))
+        val cmd = Command(CommandType.Change,OperationType.Join,id,Util.addrFmt.format(ip,port))
         apply(cmd,None) match 
             case Success(_) => Success(None)
             case Failure(e) => Failure(e)
     //
     def leaveNode(id:String):Try[Unit] = 
-        val cmd = Command(cmdTypeChange,opLeave,id,"")
+        val cmd = Command(CommandType.Change,OperationType.Leave,id,"")
         apply(cmd,None) match 
             case Success(_) => Success(None)
             case Failure(e) => Failure(e)
     //
     private def addNode(id:String,ip:String,port:Int):Try[Unit] = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             if !peers.contains(id) && id != nodeId then
                 val peer = RaftPeer(id, ip,port,this)
                 if role == Raft.RoleLeader then
@@ -545,8 +545,8 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             lock.writeLock().unlock()
     //
     private def removeNode(id:String):Try[Unit] = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             if id != nodeId && peers.contains(id) then
                 val p = peers(id)
                 if role == Raft.RoleLeader then
@@ -563,11 +563,9 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     import Message.msgToAppendResp
     // create a Message,send it to msgQueue, wait a promise to get the result.
     def appendEntries(req:AppendEntriesReq):Try[AppendEntriesResp] = 
-        //
         val resp = Promise[Try[Message]]()
         val msg = Message("",AppendEntriesRequest,req,Instant.now(),None,Some(resp))
         sendMessage(msg)
-        //
         var res:Option[Try[AppendEntriesResp]] = None
         try
             Await.result(resp.future,Duration(10, MINUTES)) match
@@ -888,7 +886,6 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
       * @param req
       */
     private def processAppendEntriesRequest(req:AppendEntriesReq):(AppendEntriesResp,Boolean) =
-        //
         var updated = false
         var resp:Option[AppendEntriesResp] = None
         // reject the request,because the term is too small.
@@ -914,7 +911,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             log.dropRightFrom(req.prevLogIndex,req.prevLogTrem) match
                 case Failure(e) => 
                     resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))  
-                case Success(_) => log.append(req.entries) match
+                case Success(_) => log.append(req.entries.toIndexedSeq) match
                     case Failure(e) => 
                         resp = Some(AppendEntriesResp(currentTerm,false,log.currentIndex,log.commitIndex,nodeId))
                     case Success(_) => log.commitLog(req.leaderCommit) match 
@@ -965,7 +962,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         log.create(currentTerm,msg,callback) match 
             case Failure(e) => Failure(e)
             case Success(entry) => entry.response match
-                case None => None
+                case None => Success(None)
                 case Some(ep) => 
                     // TODO: add f to waitGroup
 
@@ -982,23 +979,21 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                         resp.success(Success(resultToMsg(r)))
                             }
                     }
-                    
-                    // 
-                // append the entry to local logStorage,
-                // and then the background heartbeat mechanism try to replication it to followers.
-                log.append(entry) match 
-                    case Failure(e) => Failure(e)
-                    case Success(_) =>
-                        // set self has synced.
-                        syncedPeer(nodeId) = true
-                        // if only one node in cluster,we donot need replicate it,just commit it immediately.
-                        if peers.size == 0 then 
-                            val commitIdx = log.currentIndex
-                            log.commitLog(commitIdx) match
-                                case Failure(e) => return Failure(e)
-                                case Success(_) => None
-                            commitIndex = log.commitIndex
-                        Success(None)
+                    // append the entry to local logStorage,
+                    // and then the background heartbeat mechanism try to replication it to followers.
+                    log.append(entry) match 
+                        case Failure(e) => Failure(e)
+                        case Success(_) =>
+                            // set self has synced.
+                            syncedPeer(nodeId) = true
+                            // if only one node in cluster,we donot need replicate it,just commit it immediately.
+                            if peers.size == 0 then 
+                                val commitIdx = log.currentIndex
+                                log.commitLog(commitIdx) match
+                                    case Failure(e) => return Failure(e)
+                                    case Success(_) => None
+                                commitIndex = log.commitIndex
+                            Success(None)
     // send appendEntries to follower/candicate, and process the response.
     import Message.appendRespToJson
     def sendAppendEntriesRequest(target:String,req:AppendEntriesReq):Try[Unit] = 
@@ -1042,5 +1037,4 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                 val msg = Message(peer.id,AppendEntriesResponse,resp,timestamp,None,None)
                                 Success(sendMessage(msg))
                             catch
-                                case e:Exception => Failure(e)                
-//
+                                case e:Exception => Failure(e)

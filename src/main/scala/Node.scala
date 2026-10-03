@@ -42,29 +42,29 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
     def getNextLogIndex:Long = nextIndex
     //
     def setNextLogIndex(idx:Long):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             nextIndex = idx
         finally
             lock.writeLock().unlock()
     //
     def getPrevLogIndex:Long = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             if nextIndex > 0 then (nextIndex - 1) else 0L
         finally
             lock.readLock().unlock()
     //
     def setPrevLogIndex(idx:Long):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             nextIndex = idx+1
         finally
             lock.writeLock().unlock()
     // 
     def startHeartbeat(interval:Int):Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             heartbeatStop = false 
             timer = new Timer()
             val task = new TimerTask {
@@ -78,8 +78,8 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
             
     //
     def stopHeartbeat():Unit = 
+        lock.writeLock().lock()
         try
-            lock.writeLock().lock()
             heartbeatStop = true
             if timer != null then
                 timer.cancel()
@@ -87,12 +87,11 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
             lock.writeLock().unlock()
     //
     private def stopped:Boolean = 
+        lock.readLock().lock()
         try
-            lock.readLock().lock()
             heartbeatStop
         finally
             lock.readLock().unlock()
-
     //
     private def heartbeat():Unit = 
         try
@@ -113,4 +112,3 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
                             case Success(_) => None
         catch
             case e:Exception => println(s"[debug] send heartbeat error ${e}") // TODO err handler
-    //

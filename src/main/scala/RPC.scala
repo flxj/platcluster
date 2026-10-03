@@ -19,16 +19,16 @@ package platcluster
 import raft.transport._
 import scala.util.{Try,Success,Failure}
 import scala.concurrent.{ExecutionContext,Future,Await}
+import scala.concurrent.duration._
 
 import akka.stream.Materializer
 import akka.actor.ActorSystem
 import akka.grpc.GrpcClientSettings
-import scala.concurrent.duration._
 import akka.http.scaladsl.model.{ HttpRequest, HttpResponse }
 import akka.http.scaladsl.Http
 import com.typesafe.config.ConfigFactory
 
-class GRPCRaftServiceImpl(cm:RaftModule)(implicit mat: Materializer) extends RaftService {
+private[platcluster] class GRPCRaftServiceImpl(cm:RaftModule)(implicit mat: Materializer) extends RaftService {
   import mat.executionContext
 
   override def requestVote(in:RequestVoteRequest): Future[RequestVoteResponse] =
@@ -42,9 +42,11 @@ class GRPCRaftServiceImpl(cm:RaftModule)(implicit mat: Materializer) extends Raf
   override def appendEntries(in:AppendEntriesRequest): Future[AppendEntriesResponse] = 
       val es = for le <- in.entries yield  le.cmd match 
             case None => 
-                platcluster.LogEntry(le.term,le.index,platcluster.Command("none","","",""),None)
+                platcluster.LogEntry(le.term,le.index,platcluster.Command(CommandType.None,OperationType.None,"",""),None)
             case Some(c) => 
-                platcluster.LogEntry(le.term,le.index,platcluster.Command(c.cmdType,c.op,c.key,c.value),None)
+                val cType = Util.getCommandType(c.cmdType)
+                val oType = Util.getOperationType(c.op)
+                platcluster.LogEntry(le.term,le.index,platcluster.Command(cType,oType,c.key,c.value),None)
       val req = AppendEntriesReq(in.leaderId,in.term,in.prevLogTrem,in.prevLogIndex,in.leaderCommit,es.toArray)
       Future {
           cm.appendEntries(req) match
@@ -146,9 +148,9 @@ private[platcluster] class RPCTransport(ip:String,port:Int,rm:RaftModule) extend
                 val client = RaftServiceClient(clientSettings)
 
                 val es = for le <- req.entries yield
-                    raft.transport.LogEntry(le.term,le.index,"",Some(raft.transport.Command(le.cmd.cmdType,le.cmd.op,le.cmd.key,le.cmd.value)))
+                    raft.transport.LogEntry(le.term,le.index,"",Some(raft.transport.Command(le.cmd.cmdType.toString(),le.cmd.opType.toString(),le.cmd.key,le.cmd.value)))
                 
-                val r = AppendEntriesRequest(req.term,req.prevLogTrem,req.prevLogIndex,req.leaderCommit,req.leaderId,es)
+                val r = AppendEntriesRequest(req.term,req.prevLogTrem,req.prevLogIndex,req.leaderCommit,req.leaderId,es.toIndexedSeq)
 
                 val app = client.appendEntries(r)
                 try

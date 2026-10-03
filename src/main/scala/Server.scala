@@ -69,10 +69,10 @@ private[platcluster] object PlatServer:
     def apply(ops:ServerOptions):Try[PlatServer] = 
         try
             val db:Storage = ops.store.driver match
-                case Storage.driverPlatdb => PlatDB(ops.store)
-                case Storage.driverMemory => MemoryStore(ops.store)
-                case Storage.driverFilePlatdb => FilePlatDBStorage(ops.store)
-                case _ => throw Storage.exceptNotSupportDriver
+                case StorageInfo.driverPlatdb => PlatDB(ops.store)
+                case StorageInfo.driverMemory => MemoryStore(ops.store)
+                case StorageInfo.driverFilePlatdb => FilePlatDBStorage(ops.store)
+                case _ => throw StorageInfo.exceptNotSupportDriver
             
             val raft = Raft(ops.raft,db.stateMachine(),db.logStorage())
             Success(new PlatServer(ops.name,ops.host,ops.port,db,raft))
@@ -121,7 +121,7 @@ private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Sto
         val bindingFuture = Http().newServerAt(host, port).bind(route)
         println(s"Server now online. Please navigate to http://${host}:${port}/v1\nPress CTR+C to stop...")
 
-        val waitOnFuture = Promise[Done].future 
+        val waitOnFuture = Promise[Done]().future 
         val shutdownHook = ShutdownHookThread{
                 println("Shutdown hook is running")
                 // cleanup logic

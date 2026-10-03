@@ -69,7 +69,7 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
                     case Failure(e) => throw e
                     case Success(resp) => Ok(resp.asJson)
             catch
-                case e:Exception => IO(Response(Status(500)))
+                case e:Exception => InternalServerError(e.getMessage())
     }
     /**
       * process append log entries request.
@@ -84,7 +84,7 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
                     case Failure(e) => throw e
                     case Success(resp) => Ok(resp.asJson)
             catch
-                case e:Exception => IO(Response(Status(500)))
+                case e:Exception => InternalServerError(e.getMessage())
     }
     // root 
     val rootService = HttpRoutes.of[IO] {
@@ -165,7 +165,6 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
     def requestVoteHandler():Try[Unit] = Success(None)
     def appendEntriesHandler():Try[Unit] = Success(None)
 
-//////////////////////////////
 private[platcluster] class HttpTransport2(host:String,port:Int):
     implicit val requestVoteReqEntityDecoder: EntityDecoder[IO, RequestVoteReq] = jsonOf[IO, RequestVoteReq]
     implicit val requestVoteRespEntityDecoder: EntityDecoder[IO, RequestVoteResp] = jsonOf[IO, RequestVoteResp]
@@ -185,7 +184,7 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
                 val resp = RequestVoteResp(vote.term+1,true)
                 Ok(resp.asJson)
             catch
-                case e:Exception => IO(Response(Status(500)))
+                case e:Exception => InternalServerError(e.getMessage())
     }
     /**
       * process append log entries request.
@@ -199,7 +198,7 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
                 val resp = AppendEntriesResp(app.term+1,true,100,100,"kkkkk")
                 Ok(resp.asJson)
             catch
-                case e:Exception => IO(Response(Status(500)))
+                case e:Exception => InternalServerError(e.getMessage())
     }
     // root 
     val rootService = HttpRoutes.of[IO] {
@@ -253,7 +252,7 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
         println(r)
         println("==============================")
         println("[3] test vote POST2")
-        val voteR2 = Command("rw","get","abc","xxx")
+        val voteR2 = Command(CommandType.ReadWrite,OperationType.Put,"abc","xxx")
         val req3 = POST(voteR2.asJson, uri"/requestVote")
         try
             val resp3 = requestVoteService.orNotFound.run(req3).unsafeRunSync() 
@@ -271,7 +270,7 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
         //
         println("==============================")
         println("[2] test append POST")
-        val ent = LogEntry(1,2,Command("rw","put","kkk","vvv"),None)
+        val ent = LogEntry(1,2,Command(CommandType.ReadWrite,OperationType.Put,"kkk","vvv"),None)
         val appR = AppendEntriesReq("iiiii",1,100,200,300,Array[LogEntry](ent))
         //
         val req2 = POST(appR.asJson, uri"/appendEntries")

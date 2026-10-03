@@ -4,7 +4,7 @@ PlatCluster is a distributed KV storage service based on the Raft algorithm, cre
 
 Compiling this project requires: jdk11+, scala3, sbt1.8.2
 
-Clone the project locally and run the sbt assembly command to obtain the program run jar package ` platcluster-0.2.0-SNAPSHOT.jar` in the target/target/scala-3.2.2/directory
+Clone the project locally and run the sbt assembly command to obtain the program run jar package ` platcluster-0.4.0.jar` in the target/target/scala-3.3.8/directory
 
 Running the program requires preparing several configuration files in advance. The file examples are as follows：
 
@@ -59,7 +59,7 @@ The `raft` section is used to configure parameters related to the Raft algorithm
 
 After writing the configuration file, you can run the platcluster instance in sequence. The command format is `java -jar platcluster 0.2.0 SNAPSHOT.jar <path/to/you/conf/file>`. The example is as follows:
 ```shell
-java -jar platcluster-0.2.0-SNAPSHOT.jar  /tmp/server1.conf
+java -jar platcluster-0.4.0-SNAPSHOT.jar  /tmp/server1.conf
 ```
 
 When you see output similar to the following, it indicates that the service has run successfully.
@@ -118,7 +118,4 @@ curl -X GET "http://localhost:8081/v1/pairs?key=kkk"
 {"key":"kkk","value":"vvvvv"}
 ```
 
-
 You can try using the ctr+c or kill command to stop the platcluster instance.
-
-

@@ -26,48 +26,60 @@ import platdb.Collection._
 private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
     val bk = "data"
     //
-    def init(): Try[Unit] = db.createCollection(bk,DB.collectionTypeBucket,0,true)
+    def init(): Try[Unit] = db.createCollection(bk,CollectionType.Bucket,0,true)
     //
-    def apply(cmd:Command):Try[Result] = 
-        println(s"[debug] apply cmd ${cmd}")
-        cmd.op match
-            case "get" => 
-                get(cmd.key) match
-                    case Failure(e) => Failure(new Exception(s"apply cmd ${cmd} failed ${e}"))
-                    case Success(value) => Success(Result(true,"",value))
-            case "put"|"set" =>
-                put(cmd.key,cmd.value) match
-                    case Failure(e) => Failure(new Exception(s"apply cmd ${cmd} failed ${e}"))
-                    case Success(_) => Success(Result(true,"",""))
-            case "delele" | "del" | "remove" =>
-                delete(cmd.key) match
-                    case Failure(e) => Failure(new Exception(s"apply cmd ${cmd} failed ${e}"))
-                    case Success(_) => Success(Result(true,"","")) 
-            case op => Failure(new Exception(s"current StateMachine not support operation ${op}"))
+    def apply(cmd:Command):Try[ExecResult] = 
+        try
+            val res = cmd.opType match
+                case OperationType.Get => 
+                    get(cmd.key) match
+                        case Failure(e) => throw e
+                        case Success(value) => ExecResult(true,"",value)
+                case OperationType.Put =>
+                    put(cmd.key,cmd.value) match
+                        case Failure(e) => throw e 
+                        case Success(_) => ExecResult(true,"","")
+                case OperationType.Delete =>
+                    delete(cmd.key) match
+                        case Failure(e) => throw e 
+                        case Success(_) => ExecResult(true,"","")
+                case op => throw new Exception(s"current StateMachine not support operation ${op}")
+            Success(res)
+        catch
+            case e:Exception => Failure(e)
     //
-    def get(key:String):Try[String] = // TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
-        var s:String = ""
-        db.view(
-            (tx:Transaction) =>
-                given t:Transaction = tx 
-                val b = openBucket(bk)
-                b.get(key) match
-                    case Failure(e) => throw e 
-                    case Success(v) => s = v 
+    def get(key:String):Try[String] = 
+        var s:Option[String] = None
+        db.view((tx:Transaction) =>
+            given t:Transaction = tx 
+            val b = openBucket(bk)
+            s = b.get(key)
         ) match
-            case Failure(e) => Failure(e)
-            case Success(_) => Success(s)
+            case Failure(e) => return Failure(e)
+            case Success(_) => None
+        s match
+            case None => Failure(new Exception("key not exists"))
+            case Some(v) => Success(v)
     //
-    def put(key:String, value:String):Try[Unit] = db.put(bk,key,value)
+    def put(key:String, value:String):Try[Unit] = 
+        db.update((tx:Transaction) =>
+            given t:Transaction = tx 
+            val b = openBucket(bk)
+            b.put(key,value)
+        )
     //
-    def delete (key:String):Try[Unit] = db.delete(bk,true,List[String](key))
-
+    def delete (key:String):Try[Unit] = 
+        db.update((tx:Transaction) =>
+            given t:Transaction = tx 
+            val b = openBucket(bk)
+            b.delete(key)
+        )
 //
 private[platcluster] class MemoryFSM() extends StateMachine:
     private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
     private val data = Map[String,String]()
     def init(): Try[Unit] = Success(None)
-    def apply(cmd:Command):Try[Result] = ???
+    def apply(cmd:Command):Try[ExecResult] = ???
     def get(key:String):Try[String] = ???
     def put(key:String, value:String):Try[Unit] = ???
     def delete (key:String):Try[Unit] = ???

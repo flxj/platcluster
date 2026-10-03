@@ -1,6 +1,6 @@
-val scala3Version = "3.2.2"
+val scala3Version = "3.3.8"
 val projectName = "platcluster"
-val projectVersion = "0.3.0-SNAPSHOT"
+val projectVersion = "0.4.0"
 
 lazy val root = project
   .in(file("."))
@@ -11,31 +11,24 @@ lazy val root = project
     assembly / assemblyJarName := s"${projectName}-${projectVersion}.jar",
 
     libraryDependencies ++= Seq(
-        "org.scalameta" %% "munit" % "0.7.29" % Test,
-        "io.github.flxj" %% "platdb" % "0.13.0"
+        "org.scalameta" %% "munit" % "0.7.29" % Test
     )
   )
 
-scalacOptions ++= Seq("-encoding", "utf8")
+scalacOptions ++= Seq("-encoding", "utf8", "-deprecation","-feature")
 javacOptions ++= Seq("-encoding", "utf8")
 Compile / doc / scalacOptions ++= Seq("-siteroot", "docs")
 Compile / doc / scalacOptions ++= Seq("-project", "platcluster")
 
-enablePlugins(AkkaGrpcPlugin)
-/*
-Compile / PB.targets := Seq(
-  scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
-)
-
+// platdb
 libraryDependencies ++= Seq(
-    "io.grpc" % "grpc-netty" % scalapb.compiler.Version.grpcJavaVersion,
-    "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
+      "io.github.flxj" %% "platdb" % "0.15.1"
 )
-*/
 
 // akka
-resolvers += "Akka library repository".at("https://repo.akka.io/maven")
+enablePlugins(AkkaGrpcPlugin)
 
+resolvers += "Akka library repository".at("https://repo.akka.io/maven")
 val AkkaVersion = "2.8.3"
 val AkkaHttpVersion = "10.5.0"
 libraryDependencies ++= Seq(
@@ -43,7 +36,7 @@ libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
       "com.typesafe.akka" %% "akka-http" % AkkaHttpVersion,
       "com.typesafe.akka" %% "akka-http-spray-json" % AkkaHttpVersion
-    )
+)
 
 
 libraryDependencies ++=Seq(
@@ -101,9 +94,10 @@ ThisBuild / homepage := Some(url("https://github.com/flxj/platcluster"))
 // Remove all additional repository other than Maven Central from POM
 ThisBuild / pomIncludeRepository := { _ => false }
 ThisBuild / publishTo := {
-  // For accounts created after Feb 2021:
-  val nexus = "https://s01.oss.sonatype.org/"
-  if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
-  else Some("releases" at nexus + "service/local/staging/deploy/maven2")
+  val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
+  if (isSnapshot.value) 
+    Some("central-snapshots" at centralSnapshots)
+  else 
+    localStaging.value
 }
 ThisBuild / publishMavenStyle := true

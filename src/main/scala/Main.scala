@@ -33,7 +33,7 @@
 package platcluster
 
 import scala.collection.mutable.Map
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.util.{Success,Failure}
 import java.io.File
 import java.lang.Thread

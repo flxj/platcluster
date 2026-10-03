@@ -19,6 +19,7 @@ package platcluster
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{Future,Promise}
 import scala.util.Try
+import scala.language.implicitConversions
 import java.time.Instant
 import io.circe.syntax._
 import io.circe.generic.auto._
@@ -26,13 +27,55 @@ import io.circe._
 import io.circe.literal._
 import io.circe.parser.decode
 
-val cmdTypeKVRW = "rw"
-val cmdTypeChange = "change"
-val cmdTypeNone = "none"
-val opJoin = "join"
-val opLeave = "leave"
+enum CommandType:
+    case ReadWrite
+    case Change
+    case Join
+    case Leave
+    case None
+    override def toString():String = this match
+        case ReadWrite => "rw"
+        case Change => "change"
+        case Join => "join"
+        case Leave => "leave"
+        case None => "none"
 
-val addrFmt = "%s:%d"
+enum OperationType:
+    case Get
+    case Put
+    case Delete
+    case Join
+    case Change
+    case Leave
+    case None
+    override def toString(): String = this match
+        case Get => "get"
+        case Put => "put"
+        case Delete => "delete"
+        case Join => "join"
+        case Change => "change"
+        case Leave => "leave"
+        case None => "none"
+
+private[platcluster] object Util:
+    val addrFmt = "%s:%d"
+    def getCommandType(tp:String):CommandType = 
+        tp.toLowerCase() match
+            case "rw" | "read" | "write" => CommandType.ReadWrite
+            case "change" => CommandType.Change
+            case "join" => CommandType.Join
+            case "leave" => CommandType.Leave
+            case "none" | "" => CommandType.None
+        
+    def getOperationType(tp:String):OperationType = 
+        tp.toLowerCase() match
+            case "get" | "search" => OperationType.Get 
+            case "put" | "insert" => OperationType.Put
+            case "delete" | "del" | "remove" => OperationType.Delete
+            case "join" => OperationType.Join
+            case "change" => OperationType.Change
+            case "leave" => OperationType.Leave 
+            case "none" | "" => OperationType.None
 
 /**
   * Represents a command that can be executed by a state machine.
@@ -41,7 +84,7 @@ val addrFmt = "%s:%d"
   * @param key for join or leave type, the key should be node id. 
   * @param value for join operation,the value should be node connection info, format is 'ip:port'
   */
-case class Command(cmdType:String,op:String,key:String,value:String)
+case class Command(cmdType:CommandType,opType:OperationType,key:String,value:String)
 
 /**
   * Indicates the result of command execution.
@@ -50,7 +93,7 @@ case class Command(cmdType:String,op:String,key:String,value:String)
   * @param err
   * @param content
   */
-case class Result(success:Boolean,err:String,content:String)
+case class ExecResult(success:Boolean,err:String,content:String)
 
 /**
   * Represents a log entry in the Raft log replication module.
@@ -60,8 +103,8 @@ case class Result(success:Boolean,err:String,content:String)
   * @param cmd
   * @param response
   */
-case class LogEntry(term:Long,index:Long,cmd:Command,response:Option[Promise[Try[Result]]]):
-    def cmdType:String = cmd.cmdType
+case class LogEntry(term:Long,index:Long,cmd:Command,response:Option[Promise[Try[ExecResult]]]):
+    def cmdType:CommandType = cmd.cmdType
 
 case class AppendEntriesReq(
     // leaderId so follower can redirect clients.
@@ -111,8 +154,8 @@ case class RequestVoteResp(
 
 //
 private[platcluster] object MessageTypes extends Enumeration {
- type MessageType = Value
- val Cmd,Res, AppendEntriesRequest,AppendEntriesResponse,RequestVoteRequest,RequestVoteResponse = Value
+    type MessageType = Value
+    val Cmd,Res, AppendEntriesRequest,AppendEntriesResponse,RequestVoteRequest,RequestVoteResponse = Value
 }
 
 import MessageTypes._
@@ -146,6 +189,26 @@ private[platcluster] object Message:
                     val exp = msg.createAt.plusMillis(t)
                     insNow.isBefore(exp)
     // 
+    given cmdEncoder: Encoder[Command] = new Encoder[Command] {
+        final def apply(c: Command): Json = Json.obj(
+            ("cmdType", Json.fromString(c.cmdType.toString())),
+            ("opType", Json.fromString(c.opType.toString())),
+            ("key", Json.fromString(c.key)),
+            ("value", Json.fromString(c.value)),
+        )
+    }
+    given cmdDecoder: Decoder[Command] = new Decoder[Command] {
+        final def apply(c: HCursor): Decoder.Result[Command] =
+            for {
+                cmdType <- c.downField("cmdType").as[String]
+                opType <- c.downField("opType").as[String]
+                key <- c.downField("key").as[String]
+                value <- c.downField("value").as[String]
+            } yield {
+                Command(Util.getCommandType(cmdType), Util.getOperationType(opType),key,value)
+            }
+    }
+    //
     given logEntryEntityEncoder: Encoder[LogEntry] = new Encoder[LogEntry] {
         final def apply(a: LogEntry): Json = Json.obj(
             ("term", Json.fromLong(a.term)),
@@ -164,13 +227,13 @@ private[platcluster] object Message:
             }
     }
     // message convert to request
-    given msgToResult:Conversion[Message,Result] =  (msg:Message) => 
+    given msgToResult:Conversion[Message,ExecResult] =  (msg:Message) => 
         if msg.content != "" then 
-            decode[Result](msg.content) match
+            decode[ExecResult](msg.content) match
                 case Right(r) => r
                 case Left(e) => throw new Exception(e)
         else 
-            Result(false,"","")
+            ExecResult(false,"","")
     //
     given msgToCmd:Conversion[Message,Command] =  (msg:Message) =>
         decode[Command](msg.content) match
@@ -203,14 +266,14 @@ private[platcluster] object Message:
     given appendRespToJson:Conversion[AppendEntriesResp,String] = (resp:AppendEntriesResp) => resp.asJson.toString()
     given appendReqToJson:Conversion[AppendEntriesReq,String] = (req:AppendEntriesReq) => req.asJson.toString()
     given cmdToJson:Conversion[Command,String] = (cmd:Command) => cmd.asJson.toString()
-    given resultToJson:Conversion[Result,String] = (res:Result) => res.asJson.toString()
+    given resultToJson:Conversion[ExecResult,String] = (res:ExecResult) => res.asJson.toString()
     // convert request to message.
     given voteRespToMsg:Conversion[RequestVoteResp,Message] = (resp:RequestVoteResp) => Message("",RequestVoteRequest,resp,Instant.now(),None,None)
     given voteReqToMsg:Conversion[RequestVoteReq,Message] = (req:RequestVoteReq) => Message("",RequestVoteResponse,req,Instant.now(),None,None)
     given appendRespToMsg:Conversion[AppendEntriesResp,Message] = (resp:AppendEntriesResp) => Message("",AppendEntriesResponse,resp,Instant.now(),None,None)
     given appendReqToMsg:Conversion[AppendEntriesReq,Message] = (req:AppendEntriesReq) => Message("",AppendEntriesRequest,req,Instant.now(),None,None)
     given cmdToMsg:Conversion[Command,Message] = (cmd:Command) => Message("",Cmd,cmd,Instant.now(),None,None)
-    given resultToMsg:Conversion[Result,Message] = (res:Result) => Message("",Res,res,Instant.now(),None,None)
+    given resultToMsg:Conversion[ExecResult,Message] = (res:ExecResult) => Message("",Res,res,Instant.now(),None,None)
 
 private[platcluster] case class RaftPeerInfo(id:String,ip:String,port:Int,nextIndex:Long)
 private[platcluster] case class RaftNodeState(commitIndex:Long,appliedIndex:Long,prevIndex:Long,peers:Array[RaftPeerInfo])
