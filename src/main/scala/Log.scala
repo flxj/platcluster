@@ -18,7 +18,7 @@ package platcluster
 
 import scala.collection.mutable.{ArrayBuffer,Map}
 import scala.util.{Try,Success,Failure}
-import scala.util.control.Breaks._
+import scala.util.boundary, boundary.break
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import io.circe.syntax._
 import io.circe.generic.auto._
@@ -242,7 +242,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             val oldCommit = commitIdx 
             // if there are log entries already commited,we cannot commit them again.
             if i >= commitIdx then  
-                breakable(
+                boundary{
                     for j <- Range((oldCommit+1).toInt,(i+1).toInt,1) do  
                         val k = j-prevIndex-1
                         val entry = entries(k.toInt)
@@ -261,7 +261,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                         //
                         if entry.cmdType == CommandType.Change  then 
                             break()
-                )
+                }
             //
             db.put(meta,lastAppliedKey,appliedIdx.toString) match
                 case Success(_) => None
@@ -336,7 +336,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                 val list = openList(name)
 
                 var start:Long = -1L
-                breakable (
+                boundary {
                     for elem <- list.iterator do elem match 
                         case None => None
                         case Some(n,l) => decode[LogEntry](l) match
@@ -345,7 +345,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
                                     start = n.toInt
                                     break()
                             case Left(e) => throw new Exception(e)
-                )
+                }
                 //
                 if start >= 0 then 
                     list.dropRight((list.length-start-1).toInt) match 
