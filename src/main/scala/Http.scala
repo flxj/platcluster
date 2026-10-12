@@ -165,6 +165,10 @@ private[platcluster] class HttpTransport(host:String,port:Int,cm:RaftModule) ext
     def requestVoteHandler():Try[Unit] = Success(None)
     def appendEntriesHandler():Try[Unit] = Success(None)
 
+    def snapshot(peer:Peer,req:SnapshotReq):Try[SnapshotResp] = ???
+
+    def installSnapshot(peer:Peer,req:InstallSnapshotReq):Try[InstallSnapshotResp] = ???
+
 private[platcluster] class HttpTransport2(host:String,port:Int):
     implicit val requestVoteReqEntityDecoder: EntityDecoder[IO, RequestVoteReq] = jsonOf[IO, RequestVoteReq]
     implicit val requestVoteRespEntityDecoder: EntityDecoder[IO, RequestVoteResp] = jsonOf[IO, RequestVoteResp]
@@ -237,48 +241,6 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
             case Some(f) => f.cancel.unsafeRunSync()
         Success(None)
     //
-    def testVoteSvc():Unit = 
-        println("[1] test vote GET")
-        val req = Request[IO](Method.GET, uri"/requestVote")
-        val resp = requestVoteService.orNotFound.run(req).unsafeRunSync()
-        println(resp)
-        //
-        println("==============================")
-        println("[2] test vote POST")
-        val voteR = RequestVoteReq(1,"abc",100,200)
-        val req2 = POST(voteR.asJson, uri"/requestVote")
-        val resp2 = requestVoteService.orNotFound.run(req2).unsafeRunSync()
-        val r = resp2.as[RequestVoteResp].unsafeRunSync()
-        println(r)
-        println("==============================")
-        println("[3] test vote POST2")
-        val voteR2 = Command(CommandType.ReadWrite,OperationType.Put,"abc","xxx")
-        val req3 = POST(voteR2.asJson, uri"/requestVote")
-        try
-            val resp3 = requestVoteService.orNotFound.run(req3).unsafeRunSync() 
-            val r = resp3.as[RequestVoteResp].unsafeRunSync()
-            println(r)
-        catch
-            case e:Exception => println(e)
-    //
-    def testAppendSvc():Unit = 
-        println("[1] test append GET")
-        val req = Request[IO](Method.GET, uri"/appendEntries")
-        val resp = appendEntriesService.orNotFound.run(req).unsafeRunSync()
-        val rr = resp.as[AppendEntriesResp].unsafeRunSync()
-        println(rr)
-        //
-        println("==============================")
-        println("[2] test append POST")
-        val ent = LogEntry(1,2,Command(CommandType.ReadWrite,OperationType.Put,"kkk","vvv"),None)
-        val appR = AppendEntriesReq("iiiii",1,100,200,300,Array[LogEntry](ent))
-        //
-        val req2 = POST(appR.asJson, uri"/appendEntries")
-        val resp2 = appendEntriesService.orNotFound.run(req2).unsafeRunSync()
-        val r = resp2.as[AppendEntriesResp].unsafeRunSync()
-        println(r)
-
-    //
     private val blockingPool = Executors.newFixedThreadPool(16)
     private val blocker = Blocker.liftExecutorService(blockingPool)
     private val httpClient: Client[IO] = JavaNetClientBuilder[IO](blocker).create
@@ -318,21 +280,5 @@ private[platcluster] class HttpTransport2(host:String,port:Int):
     //
     def requestVoteHandler():Try[Unit] = Success(None)
     def appendEntriesHandler():Try[Unit] = Success(None)
-
-    //def get(cli:Client[IO],url:String):IO[String] = cli.expect[String](url)
-    def testClient(url:String):Try[Unit] = 
-        Uri.fromString(url) match
-            case Left(e) => Failure(new Exception(e))
-            case Right(u) =>
-                val req = Request[IO](Method.GET,u)
-                try
-                    httpClient.run(req).use {
-                        case Status.Successful(r) => r.attemptAs[String].leftMap(_.message).value
-                        case r => r.as[String].map(b => Left(s"Request $req failed with status ${r.status.code} and body $b"))
-                    }.unsafeRunSync() match
-                        case Left(e) => 
-                            Failure(new Exception(e))
-                        case Right(ss) => 
-                            Success(None)
-                catch
-                    case e:Exception => Failure(e)
+    def snapshot(peer:Peer,req:SnapshotReq):Try[SnapshotResp] = ???
+    def installSnapshot(peer:Peer,req:InstallSnapshotReq):Try[InstallSnapshotResp] = ???

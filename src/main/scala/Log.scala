@@ -41,7 +41,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
     private var appliedIdx:Long = 0L
 
     private val name = "log"
-    private val meta = "logMeta"
+    private val meta = "meta"
     private val commitIdxKey = "commitIdx"
     private val lastAppliedKey = "appliedIdx"
     private val emptyCmd = Command(CommandType.None,OperationType.None,"","")
@@ -63,14 +63,6 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
             ) match
                 case Failure(e) => return Failure(new Exception(s"init log storage:create log error ${e}"))
                 case Success(_) => None
-            /*
-            db.createCollection(name,CollectionType.BList,0,true) match
-                case Failure(e) => return Failure(new Exception(s"create log storage error ${e}"))
-                case Success(_) => None
-            db.createCollection(meta,CollectionType.Bucket,0,true) match
-                case Failure(e) => return Failure(new Exception(s"create log meta error ${e}"))
-                case Success(_) => None
-            */
             // load meta info.
             db.view((tx:Transaction) => 
                 given t:Transaction = tx 
@@ -144,7 +136,7 @@ private[platcluster] class PlatDBLog(db:DB) extends LogStorage:
     //
     def close():Try[Unit] = sync()
     //
-    def compress(index:Long,term:Long):Try[Unit] = 
+    def compact(index:Long,term:Long):Try[Unit] = 
         lock.writeLock().lock()
         try 
             var entryList = ArrayBuffer[LogEntry]()
@@ -462,23 +454,4 @@ private[platcluster] class AppendLog(dir:String) extends LogStorage:
     def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry] = ???
     def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
     def registerApplyFunc(cmdType:CommandType,applyF:(entry:LogEntry)=>Unit):Unit = ???
-
-//
-private[platcluster] class MemoryLog() extends LogStorage:
-    def init():Try[Unit] = ???
-    def close():Try[Unit] = ???
-    def latest:Try[LogEntry] = ???
-    def currentIndex:Long = ???
-    def commitIndex:Long = ???
-    def setCommitIndex(idx:Long):Unit = ???
-    def updateCommitIndex(idx:Long):Try[Unit] = ???
-    def commitLog(idx:Long):Try[Unit] = ???
-    def get(index:Long):Try[LogEntry] = ???
-    def append(entry:LogEntry):Try[Unit] = ???
-    def append(entries:Seq[LogEntry]):Try[Unit] = ???
-    def delete(index:Long):Try[Unit] = ???
-    def dropRight(n:Int):Try[Unit] = ???
-    def dropRightFrom(prevIndex:Long,prevTerm:Long):Try[Boolean] = ???
-    def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry] = ???
-    def slice(index:Long,count:Int):Try[(Long,Array[LogEntry])] = ???
-    def registerApplyFunc(cmdType:CommandType,applyF:(entry:LogEntry)=>Unit):Unit = ???
+    def compact(index:Long,term:Long):Try[Unit] = ???

@@ -20,13 +20,21 @@ import scala.util.{Try,Success,Failure}
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import com.typesafe.scalalogging.LazyLogging
 
 trait Peer:
     def id:String
     def addr:(String,Int)
+    override def toString(): String
 
+private[platcluster] object RaftPeer:
+    def apply(p:String,server:Raft):RaftPeer = 
+        val info = p.split(",")
+        if info == null || info.length != 3 then
+            throw new Exception(s"peers info format wrong:${p}")
+        new RaftPeer(info(0),info(1),info(2).toInt,server)
 //
-private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft) extends Peer:
+private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft) extends LazyLogging with Peer:
     private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
     // index of the next log entry to send to that server (initialized to leader last log index + 1)
     private var nextIndex:Long = 0L
@@ -38,6 +46,8 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
     //
     def id:String = nodeId
     def addr:(String,Int) = (ip,port)
+    //
+    override def toString():String =  s"${id},${ip},${port}"
     //
     def getNextLogIndex:Long = nextIndex
     //
@@ -75,7 +85,6 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
             case e:Exception => throw e
         finally
             lock.writeLock().unlock()
-            
     //
     def stopHeartbeat():Unit = 
         lock.writeLock().lock()
@@ -111,4 +120,4 @@ private[platcluster] class RaftPeer(nodeId:String,ip:String,port:Int,server:Raft
                             case Failure(e) => throw e 
                             case Success(_) => None
         catch
-            case e:Exception => println(s"[debug] send heartbeat error ${e}") // TODO err handler
+            case e:Exception => logger.error("send heartbeat error",e)

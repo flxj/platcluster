@@ -27,6 +27,7 @@ import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.lang.Thread
 import java.time.Instant
+import com.typesafe.scalalogging.LazyLogging
 
 case class RaftOptions(
     //
@@ -45,6 +46,8 @@ case class RaftOptions(
     electionTimeout:Int,
     //
     confDir:String,
+    //
+    snapshotDir:String,
     // peers info (id,ip,port)
     peers:List[(String,String,Int)]
 )
@@ -64,6 +67,7 @@ object Raft:
     val StatusFail = "failed"
     val StatusStop = "stopped"
     val StatusStopping = "stopping"
+    val StatusSnapshotting = "snapshotting"
     val StatusUnknown = "unknown"
 
     val transHttp = "http"
@@ -73,17 +77,17 @@ object Raft:
     val defaultElectionTimeout = 150 // 
     val defaultMaxLog = 100
 
-    val exceptionAlreadyRunning = new Exception("raft node has already running")
-    val exceptionNoTransport = new Exception("not found transport")
-    val exceptionNotLeader = new Exception("current server is not raft leader")
-    val exceptionCmdTimeout = new Exception("command has already timeout")
-    val exceptionNoSupportTrans = new Exception(s"not support such transport type")
+    val errAlreadyRunning = new Exception("raft node has already running")
+    val errNoTransport = new Exception("not found transport")
+    val errNotLeader = new Exception("current server is not raft leader")
+    val errCmdTimeout = new Exception("command has already timeout")
+    val errNoSupportTrans = new Exception(s"not support such transport type")
     //
     def apply(ops:RaftOptions,fsm:StateMachine,log:LogStorage):RaftModule = new Raft(ops,fsm,log)
         
 
 // log entries; each entry contains command for state machine, and term when entry was received by leader (first index is 1)
-private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage) extends RaftModule:
+private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage) extends LazyLogging with RaftModule:
     private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
     private var heartbeatDuration:Int = ops.heartbeatInterval
     private var electionDuration:Int = ops.electionTimeout
@@ -125,7 +129,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         finally
             lock.readLock().unlock()
     //
-    def status:(String,String) =
+    def nodeStatus:(String,String) =
         lock.readLock().lock()
         try
             (stat.role,stat.status)
@@ -336,7 +340,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 ops.transportType match
                     case Raft.transHttp => trans = Some(new HttpTransport(ops.ip,ops.port,this))
                     case Raft.transGRPC => trans = Some(new RPCTransport(ops.ip,ops.port,this))
-                    case _ => throw Raft.exceptionNoSupportTrans
+                    case _ => throw Raft.errNoSupportTrans
                 
                 // if snapshort exists, use it overwrite ops.
                 var prevIndex:Long = 0L
@@ -347,7 +351,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                         lastApplied = s.appliedIndex
                         prevIndex = s.prevIndex
                         for p <- s.peers do 
-                            val peer = RaftPeer(p.id,p.ip,p.port,this)
+                            val peer = new RaftPeer(p.id,p.ip,p.port,this)
                             peer.setNextLogIndex(p.nextIndex)
                             peers(p.id) = peer 
                 
@@ -355,7 +359,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 if peers.size == 0 then 
                     // create peers
                     for (name,ip,port) <- ops.peers do
-                        peers(name) = RaftPeer(name,ip,port,this)
+                        peers(name) = new RaftPeer(name,ip,port,this)
                 
                 saveState(ops.confDir) match 
                     case Failure(e) => throw e 
@@ -364,13 +368,6 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 fsm.init() match
                     case Failure(e) => throw new Exception(s"init fsm failed ${e}")
                     case Success(_) => None
-                //
-                //log.updateAppliedIndex(commitIndex) match
-                //    case Success(_) => None
-                //    case Failure(e) => throw e
-                //log.updatePrevIndex() match
-                //    case Success(_) => None
-                //    case Failure(e) => throw e
 
                 log.registerApplyFunc(CommandType.ReadWrite,applyKV)
                 log.registerApplyFunc(CommandType.Change,applyChange)
@@ -404,7 +401,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     def start():Try[Unit] = 
         val s = state
         if s.status == Raft.StatusRun then
-            Failure(Raft.exceptionAlreadyRunning)
+            Failure(Raft.errAlreadyRunning)
         else
             init() match
                 case Failure(e) => return Failure(e)
@@ -418,7 +415,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     currentTerm = entry.term
                     // start the tranport module.
                     trans match
-                        case None => Failure(Raft.exceptionNoTransport)
+                        case None => Failure(Raft.errNoTransport)
                         case Some(svc) => svc.startAsync() match
                             case Failure(e) => Failure(e)
                             case Success(_) => 
@@ -430,7 +427,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                 Success(setStatus(Raft.StatusRun))
     //
     def stop():Try[Unit] = 
-        val (_,s) = status
+        val (_,s) = nodeStatus
         if s == Raft.StatusStop || s == Raft.StatusFail then
             Success(None)
         else if s == Raft.StatusStopping then 
@@ -438,13 +435,13 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         else
             try
                 stopSignal = true
-                println(s"waiting future completed...")
+                logger.info("waiting future completed...")
                 for w <- waitGroup do
                     Await.result(w,1.hours)
                 //
                 waitGroup.clear()
                 setStatus(Raft.StatusStop)
-                println(s"stopping transport...")
+                logger.info("stopping transport...")
                 trans match
                     case None => None
                     case Some(svc) => svc.stop() 
@@ -533,7 +530,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         lock.writeLock().lock()
         try
             if !peers.contains(id) && id != nodeId then
-                val peer = RaftPeer(id, ip,port,this)
+                val peer = new RaftPeer(id, ip,port,this)
                 if role == Raft.RoleLeader then
                     peer.startHeartbeat(heartbeatInterval)
                 peers(id) = peer 
@@ -604,11 +601,14 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
     private def mainLoop(): Unit =
         try
             var s = state
-            while !stopSignal && s.status != Raft.StatusStop && s.status != Raft.StatusFail do 
-                s.role match
-                    case Raft.RoleCandicate => runCandicate()
-                    case Raft.RoleFollower => runFollower()
-                    case Raft.RoleLeader => runLeader()
+            while s.status != Raft.StatusStop && s.status != Raft.StatusFail do 
+                if s.status == Raft.StatusSnapshotting then 
+                    runSnapshot()
+                else
+                    s.role match
+                        case Raft.RoleCandicate => runCandicate()
+                        case Raft.RoleFollower => runFollower()
+                        case Raft.RoleLeader => runLeader()    
                 s = state
         catch
             case e:Exception => setFail(e)
@@ -670,22 +670,23 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                         case None => None
                                         case Some(p) => 
                                             if !p.isCompleted then
-                                                p.failure(Raft.exceptionCmdTimeout)
+                                                p.failure(Raft.errCmdTimeout)
                             case AppendEntriesResponse => 
                                 processAppendEntriesResponse(m)
                             case AppendEntriesRequest => 
                                 val (resp,_) = processAppendEntriesRequest(m)
                                 m.response match
-                                    case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                    case Some(p) => p.success(Success(resp))
                                     case None => None
                             case RequestVoteRequest => 
                                 val (resp,_) = processRequestVoteRequest(m)
                                 m.response match
-                                    case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                    case Some(p) => p.success(Success(resp))
                                     case None => None
                             case _ => None
             catch
-                case e:Exception => println(s"[debug] leader process message error ${e}") // TODO: error handler: for example, record then to logger
+                case e:Exception => 
+                    logger.error("leader process message error",e)
         //
         syncedPeer.clear()
 
@@ -715,22 +716,28 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                             case Some(m) => m.msgType match
                                 case Cmd => m.response match
                                     case None => None
-                                    case Some(p) => p.failure(Raft.exceptionNotLeader) 
+                                    case Some(p) => p.failure(Raft.errNotLeader) 
                                 case AppendEntriesRequest => 
                                     val (resp,f) = processAppendEntriesRequest(m) 
                                     flush = f 
                                     m.response match
-                                        case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                        case Some(p) => p.success(Success(resp))
                                         case None => None
                                 case RequestVoteRequest => 
                                     val (resp,f) = processRequestVoteRequest(m)
                                     flush = f 
                                     m.response match
-                                        case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                        case Some(p) => p.success(Success(resp))
+                                        case None => None
+                                case SnapshotRequest =>
+                                    val resp = processSnapshotRequest(m)
+                                    m.response match
+                                        case Some(p) => p.success(Success(resp))
                                         case None => None
                                 case _ => None
                     catch
-                        case e:Exception => println(s"[debug] follower process message error ${e}") // TODO err handler
+                        case e:Exception => 
+                            logger.error("follower process message error",e)
                 //
                 if flush then 
                     timeout = randomTimer(electionTimeout,electionTimeout*2)
@@ -777,14 +784,14 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                     //TODO: waitGroup += resp
                     val rv:Future[Try[RequestVoteResp]] = Future {
                         trans match
-                            case None => Failure(Raft.exceptionNoTransport)
+                            case None => Failure(Raft.errNoTransport)
                             case Some(tran) => 
                                 val req = RequestVoteReq(currentTerm,nodeId,lastLogIndex,lastLogTerm)
 
                                 tran.requestVote(p,req)
                     }
                     rv.onComplete {
-                        case Failure(e) => println(s"[debug] request vote error ${e}") // TODO: maybe we need record the failure info to logger
+                        case Failure(e) => logger.error("request vote error",e)
                         case Success(r) => r match
                             case Failure(e) => None 
                             case Success(resp) =>
@@ -811,22 +818,52 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                         case None => None
                         case Some(m) => m.msgType match
                             case Cmd => m.response match
-                                case Some(p) => p.failure(Raft.exceptionNotLeader)
+                                case Some(p) => p.failure(Raft.errNotLeader)
                                 case None => None
                             case AppendEntriesRequest => 
                                 val (resp,_) = processAppendEntriesRequest(m)
                                 m.response match
-                                    case Some(p) => p.success(Success(appendRespToMsg(resp)))
+                                    case Some(p) => p.success(Success(resp))
                                     case None => None
                             case RequestVoteRequest => 
                                 val (resp,_) = processRequestVoteRequest(m)
                                 m.response match
-                                    case Some(p) => p.success(Success(voteRespToMsg(resp)))
+                                    case Some(p) => p.success(Success(resp))
                                     case None => None
                             case _ => None 
                 catch
-                    case e:Exception => println(s"[debug] candicate process message error ${e}") // TODO  err handler
-    
+                    case e:Exception => logger.error("candicate process message error",e)
+
+    private def runSnapshot():Unit = 
+        while state.status == Raft.StatusSnapshotting && !stopSignal do 
+            try 
+                if stopSignal then
+                    setStatus(Raft.StatusStop)
+                else
+                    recvMessage() match
+                        case None => None 
+                        case Some(m) => m.msgType match
+                            case Cmd => m.response match
+                                case None => None
+                                case Some(p) => p.failure(Raft.errNotLeader) 
+                            case AppendEntriesRequest => 
+                                val (resp,_) = processAppendEntriesRequest(m) 
+                                m.response match
+                                    case Some(p) => p.success(Success(resp))
+                                    case None => None
+                            case RequestVoteRequest => 
+                                val (resp,_) = processRequestVoteRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(resp))
+                                    case None => None
+                            case InstallSnapshotRequest =>
+                                val resp = processInstallSnapshotRequest(m)
+                                m.response match
+                                    case Some(p) => p.success(Success(resp))
+                                    case None => None
+                            case _ => None
+            catch
+                case e:Exception => logger.error("snapshotting process message error",e)
     /* 
       * • If commitIndex > lastApplied: increment lastApplied, apply log[lastApplied] to state machine
       *
@@ -921,7 +958,11 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
         resp match
             case None => throw new Exception("response append entries request failed")
             case Some(r) => (r,updated)
-
+    //
+    private var lastIncludedIndex:Long = 0L
+    private var lastIncludedTerm:Long = 0L
+    private val snapshotLock = new ReentrantReadWriteLock()
+    private var snapshotList = List[Snapshot]()
     // to record if the peer has replicated log from current leader's term.
     private val syncedPeer:Map[String,Boolean] = Map[String,Boolean]()
     // only leader need process this message.
@@ -947,9 +988,21 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                 if commitMax > commitIdx then 
                     log.commitLog(commitMax)
                     commitIndex = commitMax 
-                
-        // we ignore the response if resp.success == false.
-        // because update peers log index info has completed in method sendAppendEntriesRequest
+        else
+            // we ignore the response if resp.success == false.
+            // because update peers log index info has completed in method sendAppendEntriesRequest
+            snapshotLock.readLock().lock()
+            try
+                if resp.currentLogIndex > lastIncludedIndex || snapshotList.length == 0 then
+                    None
+                else
+                    val ss = snapshotList.head
+                    if resp.currentLogIndex <= ss.meta.lastIndex && ss.state == SnapshotState.Available then
+                        sendSnapshot(ss,resp.nodeId)
+            catch
+                case e:Exception => throw e 
+            finally
+                snapshotLock.readLock().unlock()
     //
     import Message.resultToMsg
     // only leader can process such message.
@@ -976,7 +1029,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                         resp.failure(e)
                                 case Success(r) =>
                                     if !resp.isCompleted then
-                                        resp.success(Success(resultToMsg(r)))
+                                        resp.success(Success(r))
                             }
                     }
                     // append the entry to local logStorage,
@@ -1001,7 +1054,7 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
             case None => Failure(throw new Exception(s"not known such peer ${target}"))
             case Some(peer) => 
                 trans match
-                    case None => Failure(Raft.exceptionNoTransport)
+                    case None => Failure(Raft.errNoTransport)
                     case Some(tran) => tran.appendEntries(peer,req) match 
                         case Failure(e) => Failure(e) 
                         case Success(resp) =>
@@ -1038,3 +1091,102 @@ private[platcluster] class Raft(ops:RaftOptions,fsm:StateMachine,log:LogStorage)
                                 Success(sendMessage(msg))
                             catch
                                 case e:Exception => Failure(e)
+    //
+    private def snapshotName(index:Long,term:Long):String = s"snapshot_${index}_${term}.ss"
+    private def processSnapshotRequest(req:SnapshotReq):SnapshotResp = 
+        log.get(req.lastIndex) match
+            case Failure(e) => throw e 
+            case Success(entry) => 
+                if entry.term >= req.lastTerm then
+                    SnapshotResp(false)
+                else
+                    setStatus(Raft.StatusSnapshotting)
+                    leaderId = Some(req.leaderId)
+                    snapshotLock.writeLock().lock()
+                    try
+                        // create a new snapshot and waiting recv data from leader.
+                        val name = snapshotName(req.lastIndex,req.lastTerm)
+                        val ss = new FileSnapshot(ops.snapshotDir,name,req.size,req.leaderId,req.lastIndex,req.lastTerm)
+                        ss.open()
+                        snapshotList = ss::snapshotList
+                        SnapshotResp(true)
+                    catch
+                        case e:Exception => throw e 
+                    finally
+                        snapshotLock.writeLock().unlock()
+
+    private def processInstallSnapshotRequest(req:InstallSnapshotReq):InstallSnapshotResp = 
+        snapshotLock.writeLock().lock()
+        try
+            if req.term < currentTerm then
+                InstallSnapshotResp(currentTerm,commitIndex,false)
+            else
+                currentTerm = req.term
+
+            val ss = snapshotList.head
+            if req.leaderId != ss.id then
+                InstallSnapshotResp(currentTerm,commitIndex,false)
+            else
+                ss.write(req.offset,req.data)
+                if req.done then
+                    ss.save()
+                    fsm.recovery(ss) match
+                        case Failure(e) => throw e 
+                        case Success(_) => 
+                            val ps = ss.meta.peers.map[RaftPeer]((p:String) => RaftPeer(p,this))
+                            peers.clear()
+                            for p <- ps do peers.put(p.id,p)
+
+                            log.compact(ss.meta.lastIndex,ss.meta.lastTerm)
+
+                            lastApplied = ss.meta.lastIndex
+                            commitIndex = ss.meta.lastIndex
+
+                            snapshotList = List[Snapshot]()
+                            snapshotList = ss::snapshotList
+                    setStatus(Raft.StatusRun)
+                    ss.close()
+                InstallSnapshotResp(currentTerm,commitIndex,true)
+        catch
+            case e:Exception => throw e 
+        finally
+            snapshotLock.writeLock().unlock()
+    //
+    private def sendSnapshot(ss:Snapshot,peer:String):Unit = 
+        peers.get(peer) match
+            case None => Failure(throw new Exception(s"not known such peer ${peer}"))
+            case Some(node) => 
+                ss.open()
+                try
+                    trans match
+                        case None => Failure(Raft.errNoTransport)
+                        case Some(tran) => 
+                            val req = SnapshotReq(leader,ss.meta.lastIndex,ss.meta.lastTerm,ss.meta.size)
+                            tran.snapshot(node,req) match
+                                case Failure(e) => throw e 
+                                case Success(resp) => 
+                                    if !resp.success then
+                                        throw new Exception("snapshot response not success")
+                                    val chunkSize = 8192
+                                    for (data,offset) <- ss.read(chunkSize) do 
+                                        if data != null && data.length > 0 then
+                                            val req = InstallSnapshotReq(
+                                                currentTerm,
+                                                leader,
+                                                ss.meta.lastIndex,
+                                                ss.meta.lastTerm,
+                                                offset,
+                                                data,
+                                                ss.meta.peers,
+                                                "",
+                                                (offset+data.length) >= ss.meta.size
+                                            )
+                                            tran.installSnapshot(node,req) match
+                                                case Failure(e) => throw e 
+                                                case Success(resp) =>
+                                                    if !resp.success then
+                                                        throw new Exception(s"send install snapshot to ${node.addr},but response not success")
+                catch
+                    case e:Exception => throw e 
+                finally
+                    ss.close()

@@ -39,6 +39,10 @@ trait Transport:
       */
     def appendEntries(peer:Peer,req:AppendEntriesReq):Try[AppendEntriesResp]
 
+    def snapshot(peer:Peer,req:SnapshotReq):Try[SnapshotResp]
+
+    def installSnapshot(peer:Peer,req:InstallSnapshotReq):Try[InstallSnapshotResp]
+
 /**
   * 
   */

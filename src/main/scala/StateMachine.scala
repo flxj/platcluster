@@ -74,12 +74,7 @@ private[platcluster] class PlatDBFSM(db:DB) extends StateMachine:
             val b = openBucket(bk)
             b.delete(key)
         )
-//
-private[platcluster] class MemoryFSM() extends StateMachine:
-    private val lock:ReentrantReadWriteLock = new ReentrantReadWriteLock()
-    private val data = Map[String,String]()
-    def init(): Try[Unit] = Success(None)
-    def apply(cmd:Command):Try[ExecResult] = ???
-    def get(key:String):Try[String] = ???
-    def put(key:String, value:String):Try[Unit] = ???
-    def delete (key:String):Try[Unit] = ???
+    
+    def recovery(snap:Snapshot): Try[Unit] = ???
+
+    def persist(sink:Snapshot): Try[Unit] = ???

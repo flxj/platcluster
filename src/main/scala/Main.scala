@@ -38,6 +38,7 @@ import scala.util.{Success,Failure}
 import java.io.File
 import java.lang.Thread
 import com.typesafe.config.ConfigFactory
+import com.typesafe.scalalogging.LazyLogging
 
 private[platcluster] def parseConfig(args:Seq[String]):ServerOptions =
     if args.length == 0 || args(0) == "" then
@@ -51,11 +52,10 @@ private[platcluster] def parseConfig(args:Seq[String]):ServerOptions =
     val port = config.getInt("service.port")
     if port <= 0 then 
         throw new Exception(s"Illegal service.port parameter ${port}: the port cannot be negative")
-
+    
     // storage options
-    val driver = config.getString("storage.driver")
-    val logPath = config.getString("storage.logPath")
-    val dataPath = config.getString("storage.dataPath")
+    val logDriver = config.getString("storage.logDriver")
+    val dataDriver = config.getString("storage.dataDriver")
 
     // raft options
     val id = config.getString("raft.id")
@@ -66,6 +66,9 @@ private[platcluster] def parseConfig(args:Seq[String]):ServerOptions =
     val confDir = config.getString("raft.confDir")
     if confDir == "" then 
         throw new Exception("Illegal raft.confDir parameter: confDir cannot be empty")
+    val snapshotDir = config.getString("raft.snapshotDir")
+    if snapshotDir == "" then 
+        throw new Exception("Illegal raft.snapshotDir parameter: snapshotDir cannot be empty")
     //
     var maxLog = config.getInt("raft.maxLogEntriesPerRequest")
     if maxLog < 0 then 
@@ -113,15 +116,15 @@ private[platcluster] def parseConfig(args:Seq[String]):ServerOptions =
     if localIP == "" then 
         throw new Exception("Illegal id parameter: node info cannot in servers")
 
-    val storeOps = StorageOptions(driver,logPath,dataPath)
-    val raftOps = RaftOptions(id,localIP,localPort,transport,maxLog,heartbeat,timeout,confDir,peers)
+    val storeOps = StorageOptions(logDriver,dataDriver)
+    val raftOps = RaftOptions(id,localIP,localPort,transport,maxLog,heartbeat,timeout,confDir,snapshotDir,peers)
     ServerOptions(name,host,port,storeOps,raftOps)
 
 
-object PlatCluster:
+object PlatCluster extends LazyLogging:
     @main def main(args:String*) =
         val ops = parseConfig(args)
-        println(ops)
+        logger.info(ops.toString())
         PlatServer(ops) match
             case Failure(e) => throw e 
             case Success(svc) => svc.run()

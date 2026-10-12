@@ -152,10 +152,28 @@ case class RequestVoteResp(
     voteGranted:Boolean
 )
 
+case class InstallSnapshotReq(
+    term:Long,
+    leaderId:String,
+    lastIndex:Long,
+    lastTerm:Long,
+    offset:Long,
+    data:Array[Byte],
+    peers:Array[String],
+    config:String,
+    done:Boolean
+)
+
+case class InstallSnapshotResp(term:Long,commitIndex:Long,success:Boolean)
+
+case class SnapshotReq(leaderId:String,lastIndex:Long,lastTerm:Long,size:Long)
+case class SnapshotResp(success:Boolean)
+
 //
 private[platcluster] object MessageTypes extends Enumeration {
     type MessageType = Value
-    val Cmd,Res, AppendEntriesRequest,AppendEntriesResponse,RequestVoteRequest,RequestVoteResponse = Value
+    val Cmd,Res,AppendEntriesRequest,AppendEntriesResponse,RequestVoteRequest,RequestVoteResponse = Value
+    val InstallSnapshotRequest,InstallSnapshotResponse,SnapshotRequest,SnapshotResponse = Value
 }
 
 import MessageTypes._
@@ -244,7 +262,6 @@ private[platcluster] object Message:
         decode[AppendEntriesReq](msg.content) match
             case Right(a) => a
             case Left(e) => throw new Exception(e)
-    //
     given msgToAppendResp:Conversion[Message,AppendEntriesResp] = (msg:Message) =>
         decode[AppendEntriesResp](msg.content) match
             case Right(a) => a
@@ -254,12 +271,28 @@ private[platcluster] object Message:
         decode[RequestVoteReq](msg.content) match
             case Right(r) => r
             case Left(e) => throw new Exception(e)
-    //
     given msgToVoteResp:Conversion[Message,RequestVoteResp] = (msg:Message) =>
         decode[RequestVoteResp](msg.content) match
             case Right(r) => r 
             case Left(e) => throw new Exception(e)
     //
+    given msgToSnapshotReq:Conversion[Message,SnapshotReq] = (msg:Message) =>
+        decode[SnapshotReq](msg.content) match
+            case Right(r) => r
+            case Left(e) => throw new Exception(e)
+    given msgToSnapshotResp:Conversion[Message,SnapshotResp] = (msg:Message) =>
+        decode[SnapshotResp](msg.content) match
+            case Right(r) => r 
+            case Left(e) => throw new Exception(e)
+    //
+    given msgToInstallSnapshotReq:Conversion[Message,InstallSnapshotReq] = (msg:Message) =>
+        decode[InstallSnapshotReq](msg.content) match
+            case Right(r) => r
+            case Left(e) => throw new Exception(e)
+    given msgToInstallSnapshotResp:Conversion[Message,InstallSnapshotResp] = (msg:Message) =>
+        decode[InstallSnapshotResp](msg.content) match
+            case Right(r) => r 
+            case Left(e) => throw new Exception(e)
     // convert to json
     given voteRespToJson:Conversion[RequestVoteResp,String] = (resp:RequestVoteResp) => resp.asJson.toString()
     given voteReqToJson:Conversion[RequestVoteReq,String] = (req:RequestVoteReq) => req.asJson.toString()
@@ -267,6 +300,11 @@ private[platcluster] object Message:
     given appendReqToJson:Conversion[AppendEntriesReq,String] = (req:AppendEntriesReq) => req.asJson.toString()
     given cmdToJson:Conversion[Command,String] = (cmd:Command) => cmd.asJson.toString()
     given resultToJson:Conversion[ExecResult,String] = (res:ExecResult) => res.asJson.toString()
+    given snapshotReqToJson:Conversion[SnapshotReq,String] = (req:SnapshotReq) => req.asJson.toString()
+    given snapshotRespToJson:Conversion[SnapshotResp,String] = (resp:SnapshotResp) => resp.asJson.toString()
+
+    given InstallSnapshotReqToJson:Conversion[InstallSnapshotReq,String] = (req:InstallSnapshotReq) => req.asJson.toString()
+    given InstallSnapshotRespToJson:Conversion[InstallSnapshotResp,String] = (resp:InstallSnapshotResp) => resp.asJson.toString()
     // convert request to message.
     given voteRespToMsg:Conversion[RequestVoteResp,Message] = (resp:RequestVoteResp) => Message("",RequestVoteRequest,resp,Instant.now(),None,None)
     given voteReqToMsg:Conversion[RequestVoteReq,Message] = (req:RequestVoteReq) => Message("",RequestVoteResponse,req,Instant.now(),None,None)
@@ -274,6 +312,14 @@ private[platcluster] object Message:
     given appendReqToMsg:Conversion[AppendEntriesReq,Message] = (req:AppendEntriesReq) => Message("",AppendEntriesRequest,req,Instant.now(),None,None)
     given cmdToMsg:Conversion[Command,Message] = (cmd:Command) => Message("",Cmd,cmd,Instant.now(),None,None)
     given resultToMsg:Conversion[ExecResult,Message] = (res:ExecResult) => Message("",Res,res,Instant.now(),None,None)
+
+    given snapshotReqToMsg:Conversion[SnapshotReq,Message] = (req:SnapshotReq) => Message("",SnapshotRequest,req,Instant.now(),None,None)
+    given snapshotRespToMsg:Conversion[SnapshotResp,Message] = (resp:SnapshotResp) => Message("",SnapshotResponse,resp,Instant.now(),None,None)
+
+    given InstallSnapshotReqToMsg:Conversion[InstallSnapshotReq,Message] = (req:InstallSnapshotReq) => 
+        Message("",InstallSnapshotRequest,req,Instant.now(),None,None)
+    given InstallSnapshotRespToMsg:Conversion[InstallSnapshotResp,Message] = (resp:InstallSnapshotResp) => 
+        Message("",InstallSnapshotResponse,resp,Instant.now(),None,None)
 
 private[platcluster] case class RaftPeerInfo(id:String,ip:String,port:Int,nextIndex:Long)
 private[platcluster] case class RaftNodeState(commitIndex:Long,appliedIndex:Long,prevIndex:Long,peers:Array[RaftPeerInfo])

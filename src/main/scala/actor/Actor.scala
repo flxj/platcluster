@@ -14,8 +14,8 @@
     limitations under the License.
 */
 
-package platcluster
+package platcluster.actor
 
 // TODO: implement a raft use actor.
-private[platcluster] class AkkaRaft:
+private[platcluster] class NodeActor:
     def id:String = ???

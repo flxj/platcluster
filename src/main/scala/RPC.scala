@@ -161,3 +161,7 @@ private[platcluster] class RPCTransport(ip:String,port:Int,rm:RaftModule) extend
     //
     def requestVoteHandler():Try[Unit] = ???
     def appendEntriesHandler():Try[Unit] = ???
+
+    def snapshot(peer:Peer,req:SnapshotReq):Try[SnapshotResp] = ???
+
+    def installSnapshot(peer:Peer,req:InstallSnapshotReq):Try[InstallSnapshotResp] = ???

@@ -40,9 +40,11 @@ import scala.util.{Try,Success,Failure}
 import spray.json._
 import spray.json.DefaultJsonProtocol
 import spray.json.RootJsonFormat
+import com.typesafe.scalalogging.LazyLogging
 
 
-case class ServerOptions(name:String,host:String,port:Int,store:StorageOptions,raft:RaftOptions)
+case class ServerOptions(name:String,host:String,port:Int,store:StorageOptions,raft:RaftOptions):
+    override def toString(): String = s"(name:${name},host:${host},port:${port},store:${store.toString()},raft:${raft.toString()})"
 
 /**
   * 
@@ -68,18 +70,13 @@ private[platcluster] trait JsonSupport extends SprayJsonSupport with DefaultJson
 private[platcluster] object PlatServer:
     def apply(ops:ServerOptions):Try[PlatServer] = 
         try
-            val db:Storage = ops.store.driver match
-                case StorageInfo.driverPlatdb => PlatDB(ops.store)
-                case StorageInfo.driverMemory => MemoryStore(ops.store)
-                case StorageInfo.driverFilePlatdb => FilePlatDBStorage(ops.store)
-                case _ => throw StorageInfo.exceptNotSupportDriver
-            
+            val db:Storage = PlatDB(ops.store)
             val raft = Raft(ops.raft,db.stateMachine(),db.logStorage())
             Success(new PlatServer(ops.name,ops.host,ops.port,db,raft))
         catch
             case e:Exception => Failure(e)
 //
-private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Storage,cm:ConsensusModule) extends JsonSupport:
+private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Storage,cm:ConsensusModule) extends LazyLogging with JsonSupport:
     // needed to run the route
     implicit val system: ActorSystem[_] = ActorSystem(Behaviors.empty, "platcluster-server")
     // needed for the future map/flatmap in the end and future in fetchItem and saveOrder
@@ -112,14 +109,14 @@ private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Sto
         //
         cm.init() match
             case Failure(e) => throw new Exception(s"init consensus module failed:${e}")
-            case Success(_) => println(s"init consensus module success")
+            case Success(_) => logger.info("init consensus module success")
         //
         cm.start() match
             case Failure(e) => throw new Exception(s"start consensus module failed:${e}")
-            case Success(_) => println(s"start consensus module success")
+            case Success(_) => logger.info("start consensus module success")
         //
         val bindingFuture = Http().newServerAt(host, port).bind(route)
-        println(s"Server now online. Please navigate to http://${host}:${port}/v1\nPress CTR+C to stop...")
+        logger.info(s"Server now online. Please navigate to http://${host}:${port}/v1\nPress CTR+C to stop...")
 
         val waitOnFuture = Promise[Done]().future 
         val shutdownHook = ShutdownHookThread{
@@ -128,23 +125,23 @@ private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Sto
                 val unbind = bindingFuture.flatMap(_.unbind())
                 
                 Await.ready(unbind, Duration.Inf) 
-                println("unbind")
+                logger.info("unbind")
                 //
-                println("stop consensus module...")
+                logger.info("stop consensus module...")
                 cm.stop() match
-                    case Failure(e) => println(s"stop consensus module failed:${e}")
-                    case Success(_) => println("consensus module stopped")
+                    case Failure(e) => logger.error("stop consensus module failed",e)
+                    case Success(_) => logger.info("consensus module stopped")
                 //
-                println("close storage...")
+                logger.info("close storage...")
                 store.close() match
-                    case Failure(e) => println(s"close storage failed:${e}")
-                    case Success(_) => println("storage closed")
+                    case Failure(e) => logger.error("close storage failed",e)
+                    case Success(_) => logger.info("storage closed")
 
-                println("terminate system...")
+                logger.info("terminate system...")
                 system.terminate()
-                println(s"shutdown platcluster server ${name}")
+                logger.info(s"shutdown platcluster server ${name}")
         }
-        println(s"waiting for connection...")
+        logger.info("waiting for connection...")
         Await.ready(waitOnFuture, Duration.Inf)
     //
     import ServerMessage._
@@ -208,7 +205,7 @@ private[platcluster] class PlatServer(name:String,host:String,port:Int,store:Sto
             pathEnd{
                 concat(
                     get {
-                        val (role,state) = cm.status
+                        val (role,state) = cm.nodeStatus
                         complete(StatusCodes.OK,s"name:${name} state:${state} role:${role}\n")
                     }
                 )

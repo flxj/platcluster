@@ -15,15 +15,14 @@ service {
     port = 8082
 }
 storage {
-    driver = "platdb:platdb"
-    logPath = "/tmp/server2/data.db"
-    dataPath = "/tmp/server2/data.db"
-
+    logDriver = "platdb:/tmp/server2/log.db"
+    dataDriver = "platdb:/tmp/server2/data.db"
 }
 raft {
     id = "2"
     transport = "http"
     confDir = "/tmp/server2"
+    snapshotDir = "/tmp/server2"
     maxLogEntriesPerRequest = 100
     heartbeatInterval = 0
     electionTimeout = 0

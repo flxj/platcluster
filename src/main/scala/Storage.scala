@@ -20,71 +20,69 @@ import scala.concurrent.Future
 import scala.util.{Try,Failure,Success}
 import platdb.{DB,defaultOptions}
 
-case class StorageOptions(driver:String,logPath:String,fsmPath:String)
+case class StorageOptions(logDriver:String,dataDriver:String)
 
 private[platcluster] object StorageInfo:
-    val driverPlatdb = "platdb:platdb"
-    val driverMemory = "memory:memory"
-    val driverFilePlatdb = "file:platdb"
+    val driverPlatdb = "platdb"
+    val driverMemory = "memory"
+    val driverFile = "file"
 
     val kvOpGet = "get"
     val kvOpPut = "put"
     val kvOpDel = "delete"
 
-    val exceptNotSupportDriver = new Exception("not support such storage driver")
-    val exceptFSMPathIsNull = new Exception("state machine storage path is null")
+    val errNotSupportDriver = new Exception("not support such storage driver now")
+    val errFSMDriverIsNull = new Exception("state machine storage driver info is null")
+    val errLogDriverIsNull = new Exception("log storage driver info is null")
 
 //
 object PlatDB:
     def apply(ops:StorageOptions):Storage = 
-        if ops.fsmPath == "" then 
-            throw StorageInfo.exceptFSMPathIsNull
-        if ops.logPath != ops.fsmPath then 
-            new PlatDB(new DB(ops.fsmPath),Some(new DB(ops.logPath)))
+        if ops.dataDriver == ""  then 
+            throw StorageInfo.errFSMDriverIsNull
+        if ops.logDriver == "" then
+            throw StorageInfo.errLogDriverIsNull
+
+        val data = ops.dataDriver.split(":")
+        if data == null || data.length != 2 then
+            throw new Exception(s"not support data driver formet:${ops.dataDriver}")
+        data(0).toLowerCase() match
+            case StorageInfo.driverPlatdb => 
+                if data(1) == "" then 
+                    throw StorageInfo.errFSMDriverIsNull
+            case _ => throw StorageInfo.errNotSupportDriver
+        
+        val log = ops.logDriver.split(":")
+        if log == null || log.length != 2 then
+            throw new Exception(s"not support log driver formet:${ops.logDriver}")
+        log(0).toLowerCase() match
+            case StorageInfo.driverPlatdb => 
+                if log(1) == "" then
+                    throw StorageInfo.errLogDriverIsNull
+            case _ => throw StorageInfo.errNotSupportDriver
+        //
+        if log(1) != data(1) then 
+            new PlatDB(new DB(data(1)),Some(new DB(log(1))))
         else
-            new PlatDB(new DB(ops.fsmPath),None)
+            new PlatDB(new DB(data(1)),None)
 //
-private[platcluster] class PlatDB(db:DB,logDB:Option[DB]) extends Storage:
+private[platcluster] class PlatDB(data:DB,log:Option[DB]) extends Storage:
     def open(): Try[Unit] = 
-        db.open() match
+        data.open() match
             case Failure(e) => Failure(e)
             case Success(_) => 
-                logDB match
+                log match
                     case None => Success(None)
                     case Some(d) => d.open()
     def close(): Try[Unit] = 
-        db.close() match
+        data.close() match
             case Failure(e) => Failure(e)
             case Success(_) => 
-                logDB match
+                log match
                     case None => Success(None)
                     case Some(d) => d.close()
     def logStorage():LogStorage = 
-        logDB match
-            case None => new PlatDBLog(db)
-            case Some(log) => new PlatDBLog(log)
-    def stateMachine():StateMachine = new PlatDBFSM(db)
-
-object FilePlatDBStorage:
-    def apply(ops:StorageOptions):Storage = new FilePlatDBStorage(ops.logPath,new DB(ops.fsmPath))
-
-//   
-private[platcluster] class FilePlatDBStorage(logPath:String,db:DB) extends Storage:
-    def open(): Try[Unit] = db.open()
-    def close(): Try[Unit] = db.close()
-    //
-    def logStorage():LogStorage = new AppendLog(logPath)
-    //
-    def stateMachine():StateMachine = new PlatDBFSM(db)
-
-//
-object MemoryStore:
-    def apply(ops:StorageOptions):Storage = new MemoryStore()
-
-private[platcluster] class MemoryStore() extends Storage:
-    def open(): Try[Unit] = Success(None)
-    def close(): Try[Unit] = Success(None)
-    //
-    def logStorage():LogStorage = new MemoryLog()
-    //
-    def stateMachine():StateMachine = new MemoryFSM()
+        log match
+            case None => new PlatDBLog(data)
+            case Some(db) => new PlatDBLog(db)
+    def stateMachine():StateMachine = new PlatDBFSM(data)

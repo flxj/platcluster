@@ -49,7 +49,7 @@ trait ConsensusModule extends KVStorage:
     // return current node id.
     def nodeId:String 
     // return current node status:(state,role)
-    def status:(String,String) 
+    def nodeStatus:(String,String) 
     // return all nodes id of current cluster.
     def members:Seq[String]
     // exec one command on the cluster.
@@ -99,6 +99,15 @@ trait StateMachine extends KVStorage:
       * @return
       */
     def apply(cmd:Command):Try[ExecResult]
+    /**
+      * recovery current state machine from file.
+      *
+      * @param file
+      * @return
+      */
+    def recovery(snap:Snapshot):Try[Unit]
+
+    def persist(sink:Snapshot):Try[Unit]
 //
 trait LogStorage:
     // init log storage.
@@ -135,3 +144,5 @@ trait LogStorage:
     def create(term:Long,cmd:Command,callback:Boolean):Try[LogEntry]
     // register apply function for log type
     def registerApplyFunc(cmdType:CommandType,applyF:(entry:LogEntry)=>Unit):Unit
+    //
+    def compact(index:Long,term:Long):Try[Unit]
